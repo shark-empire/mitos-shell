@@ -133,6 +133,31 @@ pub fn execute_with_io(
     }
 }
 
+pub fn spawn_pipeline_process(
+    program: &str,
+    args: &[String],
+    stdin: Option<Stdio>,
+    stdout: Option<Stdio>,
+) -> Result<Process, String> {
+    let executable = find_executable(program)
+        .ok_or_else(|| {
+            format!(
+                "{}: command not found",
+                program
+            )
+        })?;
+
+    let executable_string = executable.to_string_lossy();
+
+    Process::spawn(
+        &executable_string,
+        args,
+        stdin,
+        stdout,
+        None,
+    )
+}
+
 pub fn open_input(path: &str) -> Result<Stdio, String> {
     let file = File::open(path)
         .map_err(|error| {
@@ -162,4 +187,11 @@ pub fn open_output(
     };
 
     Ok(Stdio::from(file))
+}
+
+pub fn pipe() -> Result<(Stdio, Stdio), String> {
+    Err(
+        "pipe creation requires direct process-pipe support"
+            .to_string()
+    )
 }
