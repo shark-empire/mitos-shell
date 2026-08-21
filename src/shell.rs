@@ -2,6 +2,7 @@ use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use crate::builtins;
 
 pub struct Shell {
     previous_dir: Option<PathBuf>,
@@ -57,45 +58,28 @@ impl Shell {
             if args.is_empty() {
                 continue;
             }
+let command = &args[0];
+let arguments = &args[1..];
 
-            let command = &args[0];
-            let arguments = &args[1..];
-
-            match command.as_str() {
-                "cd" => {
-                    self.last_status = self.cd(arguments);
-                }
-
-                "pwd" => {
-                    self.last_status = self.pwd();
-                }
-
-                "echo" => {
-                    self.last_status = self.echo(arguments);
-                }
-
-                "export" => {
-                    self.last_status = self.export(arguments);
-                }
-
-                "clear" => {
-                    self.last_status = self.clear();
-                }
-
-                "help" => {
-                    self.last_status = self.help();
-                }
-
-                "exit" => {
-                    return self.exit(arguments);
-                }
-
-                _ => {
-                    self.last_status = self.execute_external(&args);
-                }
-            }
-        }
+match builtins::execute(
+    command,
+    arguments,
+    self.last_status,
+) {
+    builtins::BuiltinResult::Continue(status) => {
+        self.last_status = status;
     }
+
+    builtins::BuiltinResult::Exit(status) => {
+        return status;
+    }
+
+    builtins::BuiltinResult::NotBuiltin => {
+        self.last_status = self.execute_external(&args);
+       }
+      }
+    }
+}
 
     fn print_prompt(&self) {
         let cwd = env::current_dir()
