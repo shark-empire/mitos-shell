@@ -1,3 +1,4 @@
+mod builtins;
 mod shell;
 
 use shell::Shell;
