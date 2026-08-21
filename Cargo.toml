@@ -1,0 +1,8 @@
+[package]
+name = "mitos-shell"
+version = "0.1.0"
+edition = "2021"
+authors = ["shark <babor3331@gmail.com>"]
+description = "The default command-line interpreter for MITOS"
+
+[dependencies]
