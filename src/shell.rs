@@ -62,6 +62,11 @@ impl Shell {
                 }
             };
 
+            if tokens.iter().any(|token| token == "|") {
+                self.last_status = self.execute_pipeline(&tokens);
+                continue;
+            }
+
             let command_line = match parse_redirection(tokens) {
                 Ok(command_line) => command_line,
 
@@ -100,6 +105,40 @@ impl Shell {
         }
     }
 
+    fn execute_pipeline(&self, tokens: &[String]) -> i32 {
+        let mut commands: Vec<Vec<String>> = Vec::new();
+        let mut current: Vec<String> = Vec::new();
+
+        for token in tokens {
+            if token == "|" {
+                if current.is_empty() {
+                    eprintln!(
+                        "mitos-shell: empty pipeline command"
+                    );
+
+                    return 2;
+                }
+
+                commands.push(current);
+                current = Vec::new();
+            } else {
+                current.push(token.clone());
+            }
+        }
+
+        if current.is_empty() {
+            eprintln!(
+                "mitos-shell: pipeline cannot end with '|'"
+            );
+
+            return 2;
+        }
+
+        commands.push(current);
+
+        process::execute_pipeline(&commands)
+    }
+
     fn print_prompt(&self) {
         let cwd = env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("/"));
@@ -107,7 +146,10 @@ impl Shell {
         print!("MITOS {} > ", cwd.display());
 
         if let Err(error) = io::stdout().flush() {
-            eprintln!("mitos-shell: prompt error: {}", error);
+            eprintln!(
+                "mitos-shell: prompt error: {}",
+                error
+            );
         }
     }
 
@@ -226,7 +268,10 @@ fn parse_command(
             '\\' if !single_quotes => {
                 match chars.next() {
                     Some(next) => current.push(next),
-                    None => return Err("unfinished escape"),
+
+                    None => {
+                        return Err("unfinished escape");
+                    }
                 }
             }
 
