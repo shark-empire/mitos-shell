@@ -1,8 +1,9 @@
+use crate::builtins;
+use crate::process;
+
 use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::Command;
-use crate::builtins;
 
 pub struct Shell {
     previous_dir: Option<PathBuf>,
@@ -224,40 +225,16 @@ match builtins::execute(
         }
     }
 
-    fn execute_external(&self, args: &[String]) -> i32 {
-        let command = &args[0];
-
-        let mut child = match Command::new(command)
-            .args(&args[1..])
-            .spawn()
-        {
-            Ok(child) => child,
-
-            Err(error) => {
-                eprintln!(
-                    "MITOS: {}: {}",
-                    command,
-                    error
-                );
-
-                return 127;
-            }
-        };
-
-        match child.wait() {
-            Ok(status) => status.code().unwrap_or(1),
-
-            Err(error) => {
-                eprintln!(
-                    "MITOS: failed waiting for {}: {}",
-                    command,
-                    error
-                );
-
-                1
-            }
-        }
+   fn execute_external(&self, args: &[String]) -> i32 {
+    if args.is_empty() {
+        return 0;
     }
+
+    process::execute(
+        &args[0],
+        &args[1..],
+    )
+}
 
     fn expand_variables(&self, input: &str) -> String {
         let mut result = String::new();
