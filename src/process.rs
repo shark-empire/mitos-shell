@@ -195,3 +195,109 @@ pub fn pipe() -> Result<(Stdio, Stdio), String> {
             .to_string()
     )
 }
+
+
+
+pub fn execute_pipeline(
+    commands: &[Vec<String>],
+) -> i32 {
+    if commands.is_empty() {
+        return 0;
+    }
+
+    let mut children: Vec<Process> = Vec::new();
+
+    let mut previous_stdout = None;
+
+    for (index, command) in commands.iter().enumerate() {
+        if command.is_empty() {
+            continue;
+        }
+
+        let program = &command[0];
+        let args = &command[1..];
+
+        let stdin = previous_stdout
+            .take()
+            .map(Stdio::from);
+
+        let stdout = if index < commands.len() - 1 {
+            Some(Stdio::piped())
+        } else {
+            None
+        };
+
+        let executable = match find_executable(program) {
+            Some(path) => path,
+
+            None => {
+                eprintln!(
+                    "MITOS: {}: command not found",
+                    program
+                );
+
+                return 127;
+            }
+        };
+
+        let executable_string =
+            executable.to_string_lossy();
+
+        let mut command_process = Command::new(
+            executable_string.as_ref()
+        );
+
+        command_process
+            .args(args);
+
+        if let Some(stdin) = stdin {
+            command_process.stdin(stdin);
+        }
+
+        if let Some(stdout) = stdout {
+            command_process.stdout(stdout);
+        }
+
+        let mut child = match command_process.spawn() {
+            Ok(child) => child,
+
+            Err(error) => {
+                eprintln!(
+                    "MITOS: {}: {}",
+                    program,
+                    error
+                );
+
+                return 126;
+            }
+        };
+
+        previous_stdout = child.stdout
+            .take();
+
+        children.push(Process {
+            child,
+        });
+    }
+
+    let mut final_status = 0;
+
+    for mut process in children {
+        match process.wait() {
+            Ok(status) => {
+                final_status = status;
+            }
+
+            Err(error) => {
+                eprintln!(
+                    "MITOS: pipeline wait failed: {}",
+                    error
+                );
+
+                final_status = 1;
+            }
+        }
+    }
+
+    final_status
+}
