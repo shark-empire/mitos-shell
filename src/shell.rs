@@ -6,14 +6,20 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 pub struct Shell {
-    previous_dir: Option<PathBuf>,
     last_status: i32,
+}
+
+struct CommandLine {
+    command: String,
+    args: Vec<String>,
+    stdin: Option<String>,
+    stdout: Option<String>,
+    append_stdout: bool,
 }
 
 impl Shell {
     pub fn new() -> Self {
         Self {
-            previous_dir: None,
             last_status: 0,
         }
     }
@@ -46,8 +52,8 @@ impl Shell {
 
             let expanded = self.expand_variables(input);
 
-            let args = match parse_command(&expanded) {
-                Ok(args) => args,
+            let tokens = match parse_command(&expanded) {
+                Ok(tokens) => tokens,
 
                 Err(error) => {
                     eprintln!("mitos-shell: {}", error);
@@ -56,31 +62,43 @@ impl Shell {
                 }
             };
 
-            if args.is_empty() {
+            let command_line = match parse_redirection(tokens) {
+                Ok(command_line) => command_line,
+
+                Err(error) => {
+                    eprintln!("mitos-shell: {}", error);
+                    self.last_status = 2;
+                    continue;
+                }
+            };
+
+            if command_line.command.is_empty() {
                 continue;
             }
-let command = &args[0];
-let arguments = &args[1..];
 
-match builtins::execute(
-    command,
-    arguments,
-    self.last_status,
-) {
-    builtins::BuiltinResult::Continue(status) => {
-        self.last_status = status;
-    }
+            let command = &command_line.command;
+            let arguments = &command_line.args;
 
-    builtins::BuiltinResult::Exit(status) => {
-        return status;
-    }
+            match builtins::execute(
+                command,
+                arguments,
+                self.last_status,
+            ) {
+                builtins::BuiltinResult::Continue(status) => {
+                    self.last_status = status;
+                }
 
-    builtins::BuiltinResult::NotBuiltin => {
-        self.last_status = self.execute_external(&args);
-       }
-      }
+                builtins::BuiltinResult::Exit(status) => {
+                    return status;
+                }
+
+                builtins::BuiltinResult::NotBuiltin => {
+                    self.last_status =
+                        self.execute_external(&command_line);
+                }
+            }
+        }
     }
-}
 
     fn print_prompt(&self) {
         let cwd = env::current_dir()
@@ -88,153 +106,56 @@ match builtins::execute(
 
         print!("MITOS {} > ", cwd.display());
 
-        let _ = io::stdout().flush();
+        if let Err(error) = io::stdout().flush() {
+            eprintln!("mitos-shell: prompt error: {}", error);
+        }
     }
 
-    fn cd(&mut self, args: &[String]) -> i32 {
-        let current_dir = match env::current_dir() {
-            Ok(path) => path,
+    fn execute_external(
+        &self,
+        command_line: &CommandLine,
+    ) -> i32 {
+        let stdin = match &command_line.stdin {
+            Some(path) => {
+                match process::open_input(path) {
+                    Ok(stdin) => Some(stdin),
 
-            Err(error) => {
-                eprintln!("cd: {}", error);
-                return 1;
-            }
-        };
-
-        let target = if args.is_empty() {
-            match env::var("HOME") {
-                Ok(home) => PathBuf::from(home),
-                Err(_) => PathBuf::from("/"),
-            }
-        } else if args[0] == "-" {
-            match &self.previous_dir {
-                Some(path) => path.clone(),
-
-                None => {
-                    eprintln!("cd: OLDPWD not set");
-                    return 1;
+                    Err(error) => {
+                        eprintln!("MITOS: {}", error);
+                        return 1;
+                    }
                 }
             }
-        } else {
-            expand_home(&args[0])
+
+            None => None,
         };
 
-        if let Err(error) = env::set_current_dir(&target) {
-            eprintln!(
-                "cd: {}: {}",
-                target.display(),
-                error
-            );
+        let stdout = match &command_line.stdout {
+            Some(path) => {
+                match process::open_output(
+                    path,
+                    command_line.append_stdout,
+                ) {
+                    Ok(stdout) => Some(stdout),
 
-            return 1;
-        }
-
-        self.previous_dir = Some(current_dir);
-
-        0
-    }
-
-    fn pwd(&self) -> i32 {
-        match env::current_dir() {
-            Ok(path) => {
-                println!("{}", path.display());
-                0
+                    Err(error) => {
+                        eprintln!("MITOS: {}", error);
+                        return 1;
+                    }
+                }
             }
 
-            Err(error) => {
-                eprintln!("pwd: {}", error);
-                1
-            }
-        }
+            None => None,
+        };
+
+        process::execute_with_io(
+            &command_line.command,
+            &command_line.args,
+            stdin,
+            stdout,
+            None,
+        )
     }
-
-    fn echo(&self, args: &[String]) -> i32 {
-        println!("{}", args.join(" "));
-        0
-    }
-
-    fn export(&self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            for (key, value) in env::vars() {
-                println!("{}={}", key, value);
-            }
-
-            return 0;
-        }
-
-        for assignment in args {
-            let Some((key, value)) = assignment.split_once('=') else {
-                eprintln!(
-                    "export: invalid assignment: {}",
-                    assignment
-                );
-
-                return 2;
-            };
-
-            if key.is_empty() {
-                eprintln!("export: empty variable name");
-                return 2;
-            }
-
-            unsafe {
-                env::set_var(key, value);
-            }
-        }
-
-        0
-    }
-
-    fn clear(&self) -> i32 {
-        print!("\x1B[2J\x1B[H");
-
-        let _ = io::stdout().flush();
-
-        0
-    }
-
-    fn help(&self) -> i32 {
-        println!("MITOS Shell");
-        println!();
-        println!("Built-in commands:");
-        println!("  cd [DIR]       Change directory");
-        println!("  cd -           Previous directory");
-        println!("  pwd            Print current directory");
-        println!("  echo [TEXT]    Print text");
-        println!("  export VAR=V   Set environment variable");
-        println!("  clear          Clear terminal");
-        println!("  help           Show help");
-        println!("  exit [STATUS]  Exit shell");
-        println!();
-
-        0
-    }
-
-    fn exit(&self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            return self.last_status;
-        }
-
-        match args[0].parse::<i32>() {
-            Ok(status) => status,
-
-            Err(_) => {
-                eprintln!("exit: numeric argument required");
-                2
-            }
-        }
-    }
-
-   fn execute_external(&self, args: &[String]) -> i32 {
-    if args.is_empty() {
-        return 0;
-    }
-
-    process::execute(
-        &args[0],
-        &args[1..],
-    )
-}
 
     fn expand_variables(&self, input: &str) -> String {
         let mut result = String::new();
@@ -250,7 +171,7 @@ match builtins::execute(
                 chars.next();
 
                 result.push_str(
-                    &self.last_status.to_string()
+                    &self.last_status.to_string(),
                 );
 
                 continue;
@@ -281,23 +202,9 @@ match builtins::execute(
     }
 }
 
-fn expand_home(input: &str) -> PathBuf {
-    if input == "~" {
-        return env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/"));
-    }
-
-    if let Some(rest) = input.strip_prefix("~/") {
-        if let Ok(home) = env::var("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
-    }
-
-    PathBuf::from(input)
-}
-
-fn parse_command(input: &str) -> Result<Vec<String>, &'static str> {
+fn parse_command(
+    input: &str,
+) -> Result<Vec<String>, &'static str> {
     let mut args = Vec::new();
     let mut current = String::new();
 
@@ -349,4 +256,77 @@ fn parse_command(input: &str) -> Result<Vec<String>, &'static str> {
     }
 
     Ok(args)
+}
+
+fn parse_redirection(
+    tokens: Vec<String>,
+) -> Result<CommandLine, &'static str> {
+    let mut command = String::new();
+    let mut args = Vec::new();
+
+    let mut stdin = None;
+    let mut stdout = None;
+    let mut append_stdout = false;
+
+    let mut index = 0;
+
+    while index < tokens.len() {
+        match tokens[index].as_str() {
+            "<" => {
+                index += 1;
+
+                if index >= tokens.len() {
+                    return Err(
+                        "expected file after '<'",
+                    );
+                }
+
+                stdin = Some(tokens[index].clone());
+            }
+
+            ">" => {
+                index += 1;
+
+                if index >= tokens.len() {
+                    return Err(
+                        "expected file after '>'",
+                    );
+                }
+
+                stdout = Some(tokens[index].clone());
+                append_stdout = false;
+            }
+
+            ">>" => {
+                index += 1;
+
+                if index >= tokens.len() {
+                    return Err(
+                        "expected file after '>>'",
+                    );
+                }
+
+                stdout = Some(tokens[index].clone());
+                append_stdout = true;
+            }
+
+            token => {
+                if command.is_empty() {
+                    command = token.to_string();
+                } else {
+                    args.push(token.to_string());
+                }
+            }
+        }
+
+        index += 1;
+    }
+
+    Ok(CommandLine {
+        command,
+        args,
+        stdin,
+        stdout,
+        append_stdout,
+    })
 }
