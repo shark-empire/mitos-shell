@@ -95,6 +95,31 @@ pub fn try_execute(args: &[String], executor: &mut Executor) -> Option<i32> {
                 Some(1)
             }
         }
+
+        // Add to src/builtins/mod.rs inside try_execute()
+"alias" => {
+    if args.len() == 1 {
+        alias::list();
+    } else if let Some(def) = args.get(1) {
+        if let Some((name, value)) = def.split_once('=') {
+            alias::set(name, value.trim_matches('\'').trim_matches('"'));
+        } else {
+            eprintln!("alias: expected name=value");
+            return Some(1);
+        }
+    }
+    Some(0)
+}
+"unalias" => {
+    if let Some(name) = args.get(1) {
+        if !alias::remove(name) {
+            eprintln!("unalias: {}: not found", name);
+            return Some(1);
+        }
+    }
+    Some(0)
+}
+
         _ => None // Not a builtin, fallback to external execution
     }
 }
