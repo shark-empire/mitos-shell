@@ -149,35 +149,70 @@ impl Executor {
         }
     }
 
-    // ---------- pipelines / commands ----------
-    fn exec_pipeline(&mut self, p: &Pipeline) -> Result<ExecOutcome> {
-        if p.commands.len() == 1 {
-            let cmd = &p.commands[0];
+ fn exec_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecOutcome> {
+    let first = self.expand_command(&pipeline.commands[0]);
 
-            // Bare assignments: `FOO=bar`
-            if cmd.args.is_empty() {
-                for (k, v) in &cmd.assignments { set_var(k, v); }
-                return Ok(ExecOutcome::Status(0));
+    // Single-command pipeline.
+    if pipeline.commands.len() == 1 {
+        // Bare assignments:
+        //   FOO=bar
+        if first.args.is_empty() {
+            for (key, value) in &first.assignments {
+                set_var(key, value);
             }
 
-            // Builtin?
-            if let Some(outcome) = builtins::try_execute(&cmd.args) {
-                return Ok(outcome);
-            }
-
-            // Function call?
-            if let Some(name) = cmd.args.first() {
-                if let Some(fdef) = self.functions.get(name).cloned() {
-                    return self.exec_function(&fdef, &cmd.args[1..]);
-                }
-            }
+            return Ok(ExecOutcome::Status(0));
         }
 
-        let status = self.run_external_pipeline(&p.commands)?;
-        let status = if p.negated { if status == 0 { 1 } else { 0 } } else { status };
-        self.last_status = status;
-        Ok(ExecOutcome::Status(status))
+        // source / . builtin.
+        if first.args[0] == "source" || first.args[0] == "." {
+            if first.args.len() < 2 {
+                eprintln!("mitos: {}: expected a file", first.args[0]);
+                return Ok(ExecOutcome::Status(2));
+            }
+
+            return self.source_file(
+                &first.args[1],
+                &first.args[2..],
+            );
+        }
+
+        // Regular builtin.
+        if let Some(outcome) = builtins::try_execute(&first.args) {
+            return Ok(outcome);
+        }
+
+        // Function call.
+        if let Some(function) = self.functions.get(&first.args[0]).cloned() {
+            return self.exec_function(&function, &first.args[1..]);
+        }
     }
+
+    // Expand all pipeline commands.
+    let mut expanded_commands = vec![first];
+
+    for command in pipeline.commands.iter().skip(1) {
+        expanded_commands.push(self.expand_command(command));
+    }
+
+    // External pipeline.
+    let status = self.fork_pipeline(&expanded_commands)?;
+
+    let status = if pipeline.negated {
+        if status == 0 {
+            1
+        } else {
+            0
+        }
+    } else {
+        status
+    };
+
+    self.last_status = status;
+
+    Ok(ExecOutcome::Status(status))
+}
+
 
 fn exec_function(&mut self, fdef: &FunctionDef, args: &[String]) -> Result<ExecOutcome> {
     self.push_context(args.to_vec());
@@ -396,4 +431,72 @@ fn exec_function(&mut self, fdef: &FunctionDef, args: &[String]) -> Result<ExecO
             }
         }
     }
+
+
+    fn expand_command(&self, command: &SimpleCommand) -> SimpleCommand {
+    let expander = Expander::new(
+        self.last_status,
+        self.current_args().to_vec(),
+    );
+
+    let mut expanded = command.clone();
+
+    // Expand command arguments.
+    expanded.args = expander.expand_args(command.args.clone());
+
+    // Expand assignment values.
+    expanded.assignments = command
+        .assignments
+        .iter()
+        .map(|(key, value)| {
+            let expanded_value = expander
+                .expand_args(vec![value.clone()])
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+
+            (key.clone(), expanded_value)
+        })
+        .collect();
+
+    // Expand redirection targets.
+    expanded.redirects = command
+        .redirects
+        .iter()
+        .map(|redirect| match redirect {
+            Redirect::Input(path) => {
+                let path = expander
+                    .expand_args(vec![path.clone()])
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+
+                Redirect::Input(path)
+            }
+
+            Redirect::Output(path) => {
+                let path = expander
+                    .expand_args(vec![path.clone()])
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+
+                Redirect::Output(path)
+            }
+
+            Redirect::Append(path) => {
+                let path = expander
+                    .expand_args(vec![path.clone()])
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+
+                Redirect::Append(path)
+            }
+        })
+        .collect();
+
+    expanded
+     }
+
 }
