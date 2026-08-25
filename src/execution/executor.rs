@@ -6,9 +6,12 @@ use crate::parser::ast::*;
 use crate::process::job::JobTable;
 use crate::terminal::tty::TtyManager;
 use crate::util::set_var;
+use crate::lexer::lexer::Lexer;
+use crate::parser::parser::Parser;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
+use std::fs;
 
 pub struct Executor {
     pub tty: Option<TtyManager>,
@@ -43,11 +46,62 @@ impl Executor {
     }
 
     pub fn current_args(&self) -> &[String] {
-        self.context_stack.last().map(|v| v.as_slice()).unwrap_or(&[])
+        self.context_stack
+            .last()
+            .map(|values| values.as_slice())
+            .unwrap_or(&[])
     }
 
 
     pub fn last_status(&self) -> i32 { self.last_status }
+
+
+     pub fn source_file(
+        &mut self,
+        path: &str,
+        args: &[String],
+    ) -> Result<ExecOutcome> {
+        let content = match fs::read_to_string(path) {
+            Ok(content) => content,
+
+            Err(error) => {
+                eprintln!("mitos: {}: {}", path, error);
+                return Ok(ExecOutcome::Status(1));
+            }
+        };
+
+        let tokens: Vec<_> = Lexer::new(&content).collect();
+
+        let ast = match Parser::new(tokens).parse() {
+            Ok(ast) => ast,
+
+            Err(error) => {
+                eprintln!("mitos: {}: syntax error: {}", path, error);
+                return Ok(ExecOutcome::Status(2));
+            }
+        };
+
+        let pushed_context = !args.is_empty();
+
+        if pushed_context {
+            self.push_context(args.to_vec());
+        }
+
+        let result = self.exec_node(&ast);
+
+        if pushed_context {
+            self.pop_context();
+        }
+
+        match result {
+            Ok(outcome) => Ok(outcome),
+
+            Err(error) => {
+                eprintln!("mitos: {}: {}", path, error);
+                Ok(ExecOutcome::Status(1))
+            }
+        }
+    }
 
     /// Top-level entry. Returns the shell exit code if `exit` was seen.
     pub fn execute(&mut self, node: Node) -> Result<Option<i32>> {
