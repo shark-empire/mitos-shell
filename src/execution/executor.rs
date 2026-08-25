@@ -163,6 +163,27 @@ fn exec_function(&mut self, fdef: &FunctionDef, args: &[String]) -> Result<ExecO
         }
     }
 
+    fn exec_case(&mut self, c: &CaseClause) -> Result<ExecOutcome> {
+    // Expand the target word
+    let expander = Expander::new(self.last_status, self.current_args().to_vec());
+    let target = expander.expand_args(vec![c.word.clone()]).pop().unwrap_or_default();
+
+    for branch in &c.branches {
+        for pattern in &branch.patterns {
+            // Use glob pattern matching
+            if let Ok(pat) = glob::Pattern::new(pattern) {
+                if pat.matches(&target) {
+                    return self.exec_node(&branch.body);
+                }
+            } else if pattern == &target {
+                return self.exec_node(&branch.body);
+            }
+        }
+    }
+    Ok(ExecOutcome::Status(0)) // No match
+}
+
+
     fn exec_for(&mut self, c: &ForClause) -> Result<ExecOutcome> {
         let expander = Expander::new(self.last_status);
         let words: Vec<String> = c.words
