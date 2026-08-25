@@ -3,13 +3,21 @@ use glob::glob;
 
 pub struct Expander {
     last_exit_code: i32,
-    positional_args: Vec<String>, // Passed from Executor
+    positional_args: Vec<String>,
 }
 
 impl Expander {
-    pub fn new(last_exit_code: i32, positional_args: Vec<String>) -> Self {
-        Self { last_exit_code, positional_args }
+    pub fn new(
+        last_exit_code: i32,
+        positional_args: Vec<String>,
+    ) -> Self {
+        Self {
+            last_exit_code,
+            positional_args,
+        }
     }
+
+
 
     /// Expands variables, tildes, and globs for a list of arguments
     pub fn expand_args(&self, args: Vec<String>) -> Vec<String> {
@@ -55,17 +63,21 @@ impl Expander {
                         break;
                     }
                 }
-             if var_name == "?" {
-                    result.push_str(&self.last_exit_code.to_string());
-                } else if var_name == "#" {
-                    result.push_str(&self.positional_args.len().to_string());
-                } else if var_name == "@" || var_name == "*" {
-                    result.push_str(&self.positional_args.join(" "));
-                } else if let Ok(idx) = var_name.parse::<usize>() {
-                    // $1, $2, etc. (1-indexed)
-                    if idx > 0 && idx <= self.positional_args.len() {
-                        result.push_str(&self.positional_args[idx - 1]);
-                    }
+if var_name == "?" {
+    result.push_str(&self.last_exit_code.to_string());
+} else if var_name == "#" {
+    result.push_str(&self.positional_args.len().to_string());
+} else if var_name == "@" || var_name == "*" {
+    result.push_str(&self.positional_args.join(" "));
+} else if let Ok(index) = var_name.parse::<usize>() {
+    // $1, $2, $3...
+    if index > 0 && index <= self.positional_args.len() {
+        result.push_str(&self.positional_args[index - 1]);
+    }
+} else if let Ok(value) = std::env::var(&var_name) {
+                    result.push_str(&value);
+                 }
+
                 } 
         result
     }
