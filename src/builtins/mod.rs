@@ -1,3 +1,5 @@
+pub mod alias;
+
 use nix::sys::signal::{killpg, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use crate::execution::executor::Executor;
