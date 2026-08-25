@@ -1,92 +1,64 @@
-use rustyline::DefaultEditor;
+use crate::completion::helper::MitosHelper;
 use crate::execution::executor::Executor;
-use crate::parser::parser::Parser;
 use crate::lexer::lexer::Lexer;
-use crate::expansion::pipeline::ExpansionPipeline;
-// src/shell/session.rs
-use rustyline::{Editor, Config};
-use crate::completion::engine::MitosCompleter;
+use crate::parser::parser::Parser;
+use rustyline::Editor;
 
 pub struct Session {
-    rl: Editor<MitosCompleter>,
+    rl: Editor<MitosHelper>,
     executor: Executor,
 }
 
 impl Session {
     pub fn init() -> rustyline::Result<Self> {
-        let config = Config::builder()
-            .history_ignore_space(true)
-            .auto_add_history(true)
-            .build();
-
-        let mut rl = Editor::with_config(config)?;
-        rl.set_helper(Some(MitosCompleter));
-
-        // Load persistent history
+        let mut rl = Editor::with_config(rustyline::Config::builder().auto_add_history(true).build())?;
+        rl.set_helper(Some(MitosHelper));
         let _ = rl.load_history(&history_path());
-
         Ok(Self { rl, executor: Executor::new() })
     }
 
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> i32 {
+        let mut exit_code = 0;
         loop {
             let prompt = build_prompt();
             match self.rl.readline(&prompt) {
                 Ok(line) => {
                     if line.trim().is_empty() { continue; }
-                    self.execute_line(&line);
+                    if let Some(code) = self.execute_line(&line) {
+                        exit_code = code;
+                        break;
+                    }
                 }
-                Err(rustyline::error::ReadlineError::Interrupted) => {
-                    println!("^C");
-                    continue; // Ctrl+C on empty line shouldn't exit
-                }
-                Err(rustyline::error::ReadlineError::Eof) => {
-                    println!("exit");
-                    break;
-                }
-                Err(err) => {
-                    eprintln!("Error: {:?}", err);
-                    break;
-                }
+                Err(rustyline::error::ReadlineError::Interrupted) => { println!("^C"); continue; }
+                Err(rustyline::error::ReadlineError::Eof) => { println!("exit"); break; }
+                Err(e) => { eprintln!("mitos: {:?}", e); break; }
             }
         }
-
-        // Save history on exit
         let _ = self.rl.save_history(&history_path());
+        exit_code
     }
 
-    fn execute_line(&mut self, line: &str) {
-        use crate::expansion::pipeline::ExpansionPipeline;
-        use crate::lexer::lexer::Lexer;
-        use crate::parser::parser::Parser;
-
-        let pipeline = ExpansionPipeline::new(self.executor.last_status());
-        let expanded = pipeline.expand_line(line);
-
-        let lexer = Lexer::new(&expanded);
-        let tokens: Vec<_> = lexer.collect();
-
+    /// Returns Some(code) when the shell should exit.
+    fn execute_line(&mut self, line: &str) -> Option<i32> {
+        let tokens: Vec<_> = Lexer::new(line).collect();
         match Parser::new(tokens).parse() {
-            Ok(ast) => {
-                if let Err(e) = self.executor.execute(ast) {
-                    eprintln!("mitos: {}", e);
-                }
-            }
+            Ok(ast) => match self.executor.execute(ast) {
+                Ok(maybe_exit) => return maybe_exit,
+                Err(e) => eprintln!("mitos: {}", e),
+            },
             Err(e) => eprintln!("mitos: syntax error: {}", e),
         }
+        None
     }
 }
 
 fn history_path() -> std::path::PathBuf {
-    let mut path = dirs::home_dir().unwrap_or_default();
-    path.push(".mitos_history");
-    path
+    let mut p = dirs::home_dir().unwrap_or_default();
+    p.push(".mitos_history");
+    p
 }
 
 fn build_prompt() -> String {
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "?".to_string());
-    // ANSI: bold blue "MITOS", green cwd, reset
+    let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| "?".into());
     format!("\x1b[1;34mMITOS\x1b[0m \x1b[32m{}\x1b[0m \x1b[1m❯\x1b[0m ", cwd)
 }
