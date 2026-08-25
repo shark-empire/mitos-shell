@@ -7,15 +7,10 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(input: &str) -> Self {
-        Self {
-            input: input.chars().collect(),
-            pos: 0,
-        }
+        Self { input: input.chars().collect(), pos: 0 }
     }
 
-    fn peek(&self) -> Option<char> {
-        self.input.get(self.pos).copied()
-    }
+    fn peek(&self) -> Option<char> { self.input.get(self.pos).copied() }
 
     fn advance(&mut self) -> Option<char> {
         let ch = self.peek();
@@ -23,13 +18,10 @@ impl Lexer {
         ch
     }
 
-    fn skip_whitespace(&mut self) {
+    fn skip_spaces(&mut self) {
+        // Skip spaces and tabs only — newlines are meaningful tokens.
         while let Some(ch) = self.peek() {
-            if ch.is_whitespace() {
-                self.advance();
-            } else {
-                break;
-            }
+            if ch == ' ' || ch == '\t' { self.advance(); } else { break; }
         }
     }
 }
@@ -38,24 +30,24 @@ impl Iterator for Lexer {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.skip_whitespace();
+        self.skip_spaces();
         let ch = self.advance()?;
 
         match ch {
-            '|' => {
-                if self.peek() == Some('|') { self.advance(); Some(Token::Or) } 
-                else { Some(Token::Pipe) }
-            }
-            '&' => {
-                if self.peek() == Some('&') { self.advance(); Some(Token::And) } 
-                else { Some(Token::Background) }
-            }
+            '\n' => Some(Token::Newline),
+            '|' => if self.peek() == Some('|') { self.advance(); Some(Token::Or) } else { Some(Token::Pipe) },
+            '&' => if self.peek() == Some('&') { self.advance(); Some(Token::And) } else { Some(Token::Background) },
             ';' => Some(Token::Semicolon),
             '<' => Some(Token::RedirectIn),
             '>' => {
-                if self.peek() == Some('>') { self.advance(); Some(Token::AppendOut) } 
+                if self.peek() == Some('>') { self.advance(); Some(Token::AppendOut) }
                 else { Some(Token::RedirectOut) }
             }
+            '(' => Some(Token::LeftParen),
+            ')' => Some(Token::RightParen),
+            '{' => Some(Token::LeftBrace),
+            '}' => Some(Token::RightBrace),
+            '!' => Some(Token::Bang),
             '\'' | '"' => {
                 let quote = ch;
                 let mut word = String::new();
@@ -73,7 +65,8 @@ impl Iterator for Lexer {
                 let mut word = String::new();
                 word.push(ch);
                 while let Some(c) = self.peek() {
-                    if c.is_whitespace() || "|&;<>()".contains(c) { break; }
+                    // Break on any structural character or whitespace.
+                    if c.is_whitespace() || "|&;<>(){}!\n".contains(c) { break; }
                     word.push(c);
                     self.advance();
                 }
