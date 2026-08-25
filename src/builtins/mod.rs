@@ -34,6 +34,7 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
             Some(ExecOutcome::Status(0))
         }
         "export" => Some(ExecOutcome::Status(builtin_export(args))),
+        "test" | "[" => Some(ExecOutcome::Status(test::execute_test(args))),
         "jobs" => {
             for job in &executor.jobs.jobs {
                 let state = match job.status {
