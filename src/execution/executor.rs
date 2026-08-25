@@ -4,6 +4,7 @@ use crate::expansion::expander::Expander;
 use crate::parser::ast::{Command, Redirect};
 use crate::process::job::{JobStatus, JobTable};
 use crate::terminal::tty::TtyManager;
+use crate::expansion::pipeline::ExpansionPipeline;
 
 use nix::fcntl::{open, OFlag};
 use nix::sys::stat::Mode;
@@ -37,15 +38,11 @@ impl Executor {
         // 1. Expand arguments
         // ------------------------------------------------------------
 
-        let expander = Expander::new(self.last_status);
-
-        let commands: Vec<Command> = commands
-            .into_iter()
-            .map(|mut cmd| {
-                cmd.args = expander.expand_args(cmd.args);
-                cmd
-            })
-            .collect();
+        let pipeline = ExpansionPipeline::new(self.last_status);
+let commands: Vec<Command> = commands.into_iter().map(|mut cmd| {
+    cmd.args = pipeline.expand_args(cmd.args);
+    cmd
+}).collect();
 
         if commands.is_empty() {
             return Ok(0);
