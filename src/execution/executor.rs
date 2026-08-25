@@ -274,7 +274,8 @@ fn exec_function(&mut self, fdef: &FunctionDef, args: &[String]) -> Result<ExecO
 
 
     fn exec_for(&mut self, c: &ForClause) -> Result<ExecOutcome> {
-        let expander = Expander::new(self.last_status);
+        let expander = Expander::new(self.last_status, self.current_args().to_vec())
+
         let words: Vec<String> = c.words
             .iter()
             .flat_map(|w| expander.expand_args(vec![w.clone()]))
