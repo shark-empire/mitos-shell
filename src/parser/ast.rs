@@ -15,6 +15,7 @@ pub enum Node {
     While(WhileClause),
     For(ForClause),
     Function(FunctionDef),
+    Case(CaseClause),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,3 +67,16 @@ pub struct FunctionDef {
     pub name: String,
     pub body: Box<Node>,
 }
+
+#[derive(Debug, Clone)]
+pub struct CaseClause {
+    pub word: String,
+    pub branches: Vec<CaseBranch>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CaseBranch {
+    pub patterns: Vec<String>,
+    pub body: Node,
+}
+
