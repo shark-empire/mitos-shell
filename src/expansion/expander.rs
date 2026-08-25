@@ -3,11 +3,12 @@ use glob::glob;
 
 pub struct Expander {
     last_exit_code: i32,
+    positional_args: Vec<String>, // Passed from Executor
 }
 
 impl Expander {
-    pub fn new(last_exit_code: i32) -> Self {
-        Self { last_exit_code }
+    pub fn new(last_exit_code: i32, positional_args: Vec<String>) -> Self {
+        Self { last_exit_code, positional_args }
     }
 
     /// Expands variables, tildes, and globs for a list of arguments
@@ -54,18 +55,18 @@ impl Expander {
                         break;
                     }
                 }
-                
-                if var_name == "?" {
+             if var_name == "?" {
                     result.push_str(&self.last_exit_code.to_string());
-                } else if var_name == "$" {
-                    result.push_str(&std::process::id().to_string());
-                } else if let Ok(val) = env::var(&var_name) {
-                    result.push_str(&val);
-                }
-            } else {
-                result.push(c);
-            }
-        }
+                } else if var_name == "#" {
+                    result.push_str(&self.positional_args.len().to_string());
+                } else if var_name == "@" || var_name == "*" {
+                    result.push_str(&self.positional_args.join(" "));
+                } else if let Ok(idx) = var_name.parse::<usize>() {
+                    // $1, $2, etc. (1-indexed)
+                    if idx > 0 && idx <= self.positional_args.len() {
+                        result.push_str(&self.positional_args[idx - 1]);
+                    }
+                } 
         result
     }
 
