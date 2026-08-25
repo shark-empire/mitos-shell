@@ -15,6 +15,8 @@ pub struct Executor {
     pub jobs: JobTable,
     pub last_status: i32,
     functions: HashMap<String, FunctionDef>,
+    /// Stack of positional parameters. The top of the stack is the current $@.
+    context_stack: Vec<Vec<String>>, 
 }
 
 impl Executor {
@@ -24,8 +26,26 @@ impl Executor {
             jobs: JobTable::new(),
             last_status: 0,
             functions: HashMap::new(),
+            context_stack: vec![Vec::new()], // Base context (script args)
         }
     }
+
+        /// Push a new context when entering a function
+    fn push_context(&mut self, args: Vec<String>) {
+        self.context_stack.push(args);
+    }
+
+    /// Pop context when leaving a function
+    fn pop_context(&mut self) {
+        if self.context_stack.len() > 1 {
+            self.context_stack.pop();
+        }
+    }
+
+    pub fn current_args(&self) -> &[String] {
+        self.context_stack.last().map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
 
     pub fn last_status(&self) -> i32 { self.last_status }
 
