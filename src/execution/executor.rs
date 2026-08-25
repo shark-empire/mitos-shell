@@ -125,13 +125,16 @@ impl Executor {
         Ok(ExecOutcome::Status(status))
     }
 
-    fn exec_function(&mut self, fdef: &FunctionDef, _args: &[String]) -> Result<ExecOutcome> {
-        // NOTE: positional params ($1, $@) are a Phase 6 item.
-        match self.exec_node(&fdef.body)? {
-            ExecOutcome::Return(s) => Ok(ExecOutcome::Status(s)),
-            other => Ok(other),
-        }
-    }
+fn exec_function(&mut self, fdef: &FunctionDef, args: &[String]) -> Result<ExecOutcome> {
+    self.push_context(args.to_vec());
+    let result = match self.exec_node(&fdef.body)? {
+        ExecOutcome::Return(s) => Ok(ExecOutcome::Status(s)),
+        other => Ok(other),
+    };
+    self.pop_context();
+    result
+}
+
 
     // ---------- control flow ----------
     fn exec_if(&mut self, c: &IfClause) -> Result<ExecOutcome> {
