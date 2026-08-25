@@ -3,36 +3,36 @@ pub mod alias;
 use nix::sys::signal::{killpg, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use crate::execution::executor::Executor;
-
+use crate::execution::outcome::ExecOutcome;
+use crate::util::set_var;
 use crate::process::job::JobStatus;
 
-pub fn try_execute(args: &[String], executor: &mut Executor) -> Option<i32> {
-    if args.is_empty() { return None; }
-    
-    match args[0].as_str() {
-        "cd" => {
-            let dir = args.get(1).map(|s| s.as_str()).unwrap_or("~");
-            let path = if dir == "~" {
-                dirs::home_dir().unwrap_or_default()
-            } else {
-                std::path::PathBuf::from(dir)
-            };
-            
-            if let Err(e) = std::env::set_current_dir(path) {
-                eprintln!("cd: {}", e);
-                Some(1)
-            } else {
-                Some(0)
-            }
+pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
+    let name = args.first()?;
+    match name.as_str() {
+        // Control flow
+        "break" => Some(ExecOutcome::Break),
+        "continue" => Some(ExecOutcome::Continue),
+        "return" => {
+            let code = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            Some(ExecOutcome::Return(code))
         }
         "exit" => {
             let code = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-            std::process::exit(code);
+            Some(ExecOutcome::Exit(code))
         }
+
+        // Status builtins
+        "true" | ":" => Some(ExecOutcome::Status(0)),
+        "false" => Some(ExecOutcome::Status(1)),
+
+        // Directory / env
+        "cd" => Some(ExecOutcome::Status(builtin_cd(args))),
         "pwd" => {
-            println!("{}", std::env::current_dir().unwrap_or_default().display());
-            Some(0)
+            println!("{}", std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default());
+            Some(ExecOutcome::Status(0))
         }
+        "export" => Some(ExecOutcome::Status(builtin_export(args))),
         "jobs" => {
             for job in &executor.jobs.jobs {
                 let state = match job.status {
@@ -122,4 +122,24 @@ pub fn try_execute(args: &[String], executor: &mut Executor) -> Option<i32> {
 
         _ => None // Not a builtin, fallback to external execution
     }
+}
+
+fn builtin_cd(args: &[String]) -> i32 {
+    let dir = args.get(1).map(|s| s.as_str()).unwrap_or("~");
+    let path = if dir == "~" {
+        dirs::home_dir().unwrap_or_default()
+    } else {
+        std::path::PathBuf::from(dir)
+    };
+    match std::env::set_current_dir(path) {
+        Ok(_) => 0,
+        Err(e) => { eprintln!("cd: {}", e); 1 }
+    }
+}
+
+fn builtin_export(args: &[String]) -> i32 {
+    for def in args.iter().skip(1) {
+        if let Some((k, v)) = def.split_once('=') { set_var(k, v); }
+    }
+    0
 }
