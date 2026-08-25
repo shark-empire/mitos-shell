@@ -6,6 +6,7 @@ mod builtins;
 mod shell;
 mod process;
 mod terminal;
+mod expansion;
 
 
 use shell::session::Session;
