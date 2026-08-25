@@ -1,4 +1,5 @@
 pub mod alias;
+pub mod read;
 pub mod test;
 
 use nix::sys::signal::{killpg, Signal};
@@ -7,6 +8,7 @@ use crate::execution::executor::Executor;
 use crate::execution::outcome::ExecOutcome;
 use crate::util::set_var;
 use crate::process::job::JobStatus;
+use std::io::{self, Write};
 
 pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
     let name = args.first()?;
@@ -27,11 +29,23 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
         "true" | ":" => Some(ExecOutcome::Status(0)),
         "false" => Some(ExecOutcome::Status(1)),
 
+                // Input/output.
+        "echo" => Some(ExecOutcome::Status(builtin_echo(args))),
+        "read" => Some(ExecOutcome::Status(read::execute(args))),
         // Directory / env
         "cd" => Some(ExecOutcome::Status(builtin_cd(args))),
-        "pwd" => {
-            println!("{}", std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default());
-            Some(ExecOutcome::Status(0))
+       "pwd" => {
+            match std::env::current_dir() {
+                Ok(path) => {
+                    println!("{}", path.display());
+                    Some(ExecOutcome::Status(0))
+                }
+
+                Err(error) => {
+                    eprintln!("pwd: {}", error);
+                    Some(ExecOutcome::Status(1))
+                }
+            }
         }
         "export" => Some(ExecOutcome::Status(builtin_export(args))),
         "test" | "[" => Some(ExecOutcome::Status(test::execute_test(args))),
@@ -98,50 +112,111 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
             }
         }
 
-        // Add to src/builtins/mod.rs inside try_execute()
-"alias" => {
-    if args.len() == 1 {
-        alias::list();
-    } else if let Some(def) = args.get(1) {
-        if let Some((name, value)) = def.split_once('=') {
-            alias::set(name, value.trim_matches('\'').trim_matches('"'));
-        } else {
-            eprintln!("alias: expected name=value");
-            return Some(1);
+        // Aliases.
+        "alias" => {
+            if args.len() == 1 {
+                alias::list();
+            } else if let Some(definition) = args.get(1) {
+                if let Some((name, value)) = definition.split_once('=') {
+                    alias::set(
+                        name,
+                        value.trim_matches('\'').trim_matches('"'),
+                    );
+                } else {
+                    eprintln!("alias: expected name=value");
+                    return Some(ExecOutcome::Status(1));
+                }
+            }
+
+            Some(ExecOutcome::Status(0))
         }
-    }
-    Some(0)
-}
-"unalias" => {
-    if let Some(name) = args.get(1) {
-        if !alias::remove(name) {
-            eprintln!("unalias: {}: not found", name);
-            return Some(1);
+        "unalias" => {
+            let removed = args
+                .get(1)
+                .map(|name| alias::remove(name))
+                .unwrap_or(false);
+
+            if removed {
+                Some(ExecOutcome::Status(0))
+            } else {
+                eprintln!("unalias: not found");
+                Some(ExecOutcome::Status(1))
+            }
         }
-    }
-    Some(0)
-}
 
         _ => None // Not a builtin, fallback to external execution
     }
 }
 
+fn builtin_echo(args: &[String]) -> i32 {
+    let mut newline = true;
+    let mut start = 1;
+
+    if args.get(1).map(|value| value.as_str()) == Some("-n") {
+        newline = false;
+        start = 2;
+    }
+
+    let text = args[start..].join(" ");
+
+    if newline {
+        println!("{}", text);
+    } else {
+        print!("{}", text);
+
+        if let Err(error) = io::stdout().flush() {
+            eprintln!("echo: {}", error);
+            return 1;
+        }
+    }
+
+    0
+}
+
 fn builtin_cd(args: &[String]) -> i32 {
-    let dir = args.get(1).map(|s| s.as_str()).unwrap_or("~");
+    let dir = args
+        .get(1)
+        .map(|value| value.as_str())
+        .unwrap_or("~");
+
     let path = if dir == "~" {
         dirs::home_dir().unwrap_or_default()
     } else {
         std::path::PathBuf::from(dir)
     };
+
     match std::env::set_current_dir(path) {
         Ok(_) => 0,
-        Err(e) => { eprintln!("cd: {}", e); 1 }
+
+        Err(error) => {
+            eprintln!("cd: {}", error);
+            1
+        }
     }
 }
 
 fn builtin_export(args: &[String]) -> i32 {
-    for def in args.iter().skip(1) {
-        if let Some((k, v)) = def.split_once('=') { set_var(k, v); }
+    if args.len() == 1 {
+        for (key, value) in std::env::vars() {
+            println!("{}={}", key, value);
+        }
+
+        return 0;
     }
+
+    for assignment in args.iter().skip(1) {
+        if let Some((key, value)) = assignment.split_once('=') {
+            if key.is_empty() {
+                eprintln!("export: empty variable name");
+                return 1;
+            }
+
+            set_var(key, value);
+        } else {
+            eprintln!("export: invalid assignment: {}", assignment);
+            return 1;
+        }
+    }
+
     0
 }
