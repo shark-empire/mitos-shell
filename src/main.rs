@@ -4,6 +4,7 @@ mod parser;
 mod execution;
 mod builtins;
 mod shell;
+mod process;
 
 use shell::session::Session;
 use nix::sys::signal::{signal, SigHandler, Signal};
