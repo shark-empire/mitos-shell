@@ -9,6 +9,8 @@ mod terminal;
 mod expansion;
 mod util;
 mod completion;
+mod config;
+
 
 
 use shell::session::Session;
