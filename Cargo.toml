@@ -1,16 +1,21 @@
 [package]
 name = "mitos-shell"
-version = "2.0.0"
+version = "0.2.0"
 edition = "2021"
-authors = ["shark <babor3331@gmail.com>"]
-description = "The industry-standard command-line interpreter for MITOS"
+description = "The default POSIX-compliant command-line interpreter for MITOS"
 
 [dependencies]
-# Modern line-editing, history, and keybindings
+# Core System & Kernel Interaction
+nix = { version = "0.29", features = ["term", "process", "signal", "fs"] }
+libc = "0.2"
+
+# Modern REPL & UI
 rustyline = "14.0"
-# POSIX APIs for signal handling and job control
-nix = { version = "0.29", features = ["signal", "process", "term"] }
-# Pathname expansion (wildcards like *.rs)
-glob = "0.3"
-# Cross-platform directory resolution
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Utilities
 dirs = "5.0"
+glob = "0.3"
