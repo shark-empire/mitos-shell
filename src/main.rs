@@ -1,21 +1,24 @@
-mod builtins;
+mod error;
+mod lexer;
 mod parser;
-mod process;
+mod execution;
+mod builtins;
 mod shell;
 
-use shell::Shell;
+use shell::session::Session;
+use nix::sys::signal::{signal, SigHandler, Signal};
 
 fn main() {
-    // Industry Standard: Ignore signals that should only affect foreground jobs
+    // Crucial: Ignore SIGINT (Ctrl+C) and SIGQUIT in the parent shell.
+    // This ensures that when the user presses Ctrl+C, it only kills the 
+    // foreground child process (like `ping`), not the MITOS shell itself.
     unsafe {
-        let _ = nix::sys::signal::signal(nix::sys::signal::Signal::SIGINT, nix::sys::signal::SigHandler::SigIgn);
-        let _ = nix::sys::signal::signal(nix::sys::signal::Signal::SIGQUIT, nix::sys::signal::SigHandler::SigIgn);
-        let _ = nix::sys::signal::signal(nix::sys::signal::Signal::SIGTSTP, nix::sys::signal::SigHandler::SigIgn);
-        let _ = nix::sys::signal::signal(nix::sys::signal::Signal::SIGTTIN, nix::sys::signal::SigHandler::SigIgn);
-        let _ = nix::sys::signal::signal(nix::sys::signal::Signal::SIGTTOU, nix::sys::signal::SigHandler::SigIgn);
+        let _ = signal(Signal::SIGINT, SigHandler::SigIgn);
+        let _ = signal(Signal::SIGQUIT, SigHandler::SigIgn);
     }
 
-    let mut shell = Shell::new();
-    let exit_code = shell.run();
-    std::process::exit(exit_code);
+    match Session::init() {
+        Ok(mut session) => session.run(),
+        Err(e) => eprintln!("Failed to initialize MITOS shell: {}", e),
+    }
 }
