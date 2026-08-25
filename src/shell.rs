@@ -1,377 +1,133 @@
 use crate::builtins;
+use crate::parser::{self, Node};
 use crate::process;
 
 use std::env;
-use std::io::{self, Write};
 use std::path::PathBuf;
+use rustyline::DefaultEditor;
 
-pub struct Shell {
-    last_status: i32,
-}
-
-struct CommandLine {
-    command: String,
-    args: Vec<String>,
-    stdin: Option<String>,
-    stdout: Option<String>,
-    append_stdout: bool,
-}
+pub struct Shell { last_status: i32 }
 
 impl Shell {
-    pub fn new() -> Self {
-        Self {
-            last_status: 0,
-        }
-    }
+    pub fn new() -> Self { Self { last_status: 0 } }
 
     pub fn run(&mut self) -> i32 {
+        let mut rl = DefaultEditor::new().expect("Failed to init rustyline");
+        let history_file = dirs::home_dir().map(|p| p.join(".mitos_history"));
+        if let Some(path) = &history_file { let _ = rl.load_history(path); }
+
         loop {
-            self.print_prompt();
-
-            let mut input = String::new();
-
-            match io::stdin().read_line(&mut input) {
-                Ok(0) => {
-                    println!();
-                    return self.last_status;
+            let prompt = self.get_prompt();
+            match rl.readline(&prompt) {
+                Ok(line) => {
+                    let line = line.trim().to_string();
+                    if line.is_empty() { continue; }
+                    let _ = rl.add_history_entry(&line);
+                    
+                    match parser::parse(&line) {
+                        Ok(ast) => { self.last_status = self.execute_node(&ast); }
+                        Err(e) => eprintln!("mitos: {}", e),
+                    }
                 }
-
-                Ok(_) => {}
-
-                Err(error) => {
-                    eprintln!("mitos-shell: input error: {}", error);
-                    return 1;
-                }
+                Err(rustyline::error::ReadlineError::Interrupted) => println!("^C"),
+                Err(rustyline::error::ReadlineError::Eof) => break,
+                Err(err) => { eprintln!("mitos: input error: {:?}", err); break; }
             }
+        }
 
-            let input = input.trim();
+        if let Some(path) = history_file { let _ = rl.save_history(path); }
+        self.last_status
+    }
 
-            if input.is_empty() {
-                continue;
+    fn get_prompt(&self) -> String {
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let home = env::var("HOME").unwrap_or_default();
+        let cwd_str = cwd.to_string_lossy();
+        let display_path = if !home.is_empty() && cwd_str.starts_with(&home) {
+            format!("~{}", &cwd_str[home.len()..])
+        } else { cwd_str.into_owned() };
+
+        format!("\x1b[1;34mMITOS\x1b[0m \x1b[1;32m{}\x1b[0m > ", display_path)
+    }
+
+    fn execute_node(&mut self, node: &Node) -> i32 {
+        match node {
+            Node::Pipeline(p) => self.execute_pipeline(p),
+            Node::And(l, r) => {
+                let s = self.execute_node(l);
+                if s == 0 { self.execute_node(r) } else { s }
             }
-
-            let expanded = self.expand_variables(input);
-
-            let tokens = match parse_command(&expanded) {
-                Ok(tokens) => tokens,
-
-                Err(error) => {
-                    eprintln!("mitos-shell: {}", error);
-                    self.last_status = 2;
-                    continue;
-                }
-            };
-
-            if tokens.iter().any(|token| token == "|") {
-                self.last_status = self.execute_pipeline(&tokens);
-                continue;
+            Node::Or(l, r) => {
+                let s = self.execute_node(l);
+                if s != 0 { self.execute_node(r) } else { s }
             }
+            Node::Seq(l, r) => { let _ = self.execute_node(l); self.execute_node(r) }
+        }
+    }
 
-            let command_line = match parse_redirection(tokens) {
-                Ok(command_line) => command_line,
+    fn execute_pipeline(&mut self, p: &parser::Pipeline) -> i32 {
+        let mut final_status = 0;
+        
+        if p.commands.len() == 1 {
+            let cmd = &p.commands[0];
+            let expanded_args = self.expand_args(&cmd.args);
+            if expanded_args.is_empty() { return 0; }
+            
+            let program = &expanded_args[0];
+            let args = &expanded_args[1..];
 
-                Err(error) => {
-                    eprintln!("mitos-shell: {}", error);
-                    self.last_status = 2;
-                    continue;
-                }
-            };
-
-            if command_line.command.is_empty() {
-                continue;
-            }
-
-            let command = &command_line.command;
-            let arguments = &command_line.args;
-
-            match builtins::execute(
-                command,
-                arguments,
-                self.last_status,
-            ) {
-                builtins::BuiltinResult::Continue(status) => {
-                    self.last_status = status;
-                }
-
-                builtins::BuiltinResult::Exit(status) => {
-                    return status;
-                }
-
+            match builtins::execute(program, args, self.last_status) {
+                builtins::BuiltinResult::Continue(status) => final_status = status,
+                builtins::BuiltinResult::Exit(status) => return status, 
                 builtins::BuiltinResult::NotBuiltin => {
-                    self.last_status =
-                        self.execute_external(&command_line);
+                    final_status = process::execute_with_redirs(program, args, &cmd.redirs, p.background);
                 }
             }
-        }
-    }
-
-    fn execute_pipeline(&self, tokens: &[String]) -> i32 {
-        let mut commands: Vec<Vec<String>> = Vec::new();
-        let mut current: Vec<String> = Vec::new();
-
-        for token in tokens {
-            if token == "|" {
-                if current.is_empty() {
-                    eprintln!(
-                        "mitos-shell: empty pipeline command"
-                    );
-
-                    return 2;
-                }
-
-                commands.push(current);
-                current = Vec::new();
-            } else {
-                current.push(token.clone());
-            }
+        } else {
+            final_status = process::execute_pipeline(&p.commands, p.background);
         }
 
-        if current.is_empty() {
-            eprintln!(
-                "mitos-shell: pipeline cannot end with '|'"
-            );
-
-            return 2;
+        if !p.background {
+            self.last_status = final_status;
+        } else {
+            println!("[{}] {} &", 1, p.commands[0].args.join(" "));
+            final_status = 0;
         }
-
-        commands.push(current);
-
-        process::execute_pipeline(&commands)
-    }
-
-    fn print_prompt(&self) {
-        let cwd = env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("/"));
-
-        print!("MITOS {} > ", cwd.display());
-
-        if let Err(error) = io::stdout().flush() {
-            eprintln!(
-                "mitos-shell: prompt error: {}",
-                error
-            );
-        }
-    }
-
-    fn execute_external(
-        &self,
-        command_line: &CommandLine,
-    ) -> i32 {
-        let stdin = match &command_line.stdin {
-            Some(path) => {
-                match process::open_input(path) {
-                    Ok(stdin) => Some(stdin),
-
-                    Err(error) => {
-                        eprintln!("MITOS: {}", error);
-                        return 1;
-                    }
-                }
-            }
-
-            None => None,
-        };
-
-        let stdout = match &command_line.stdout {
-            Some(path) => {
-                match process::open_output(
-                    path,
-                    command_line.append_stdout,
-                ) {
-                    Ok(stdout) => Some(stdout),
-
-                    Err(error) => {
-                        eprintln!("MITOS: {}", error);
-                        return 1;
-                    }
-                }
-            }
-
-            None => None,
-        };
-
-        process::execute_with_io(
-            &command_line.command,
-            &command_line.args,
-            stdin,
-            stdout,
-            None,
-        )
+        final_status
     }
 
     fn expand_variables(&self, input: &str) -> String {
         let mut result = String::new();
         let mut chars = input.chars().peekable();
-
         while let Some(ch) = chars.next() {
-            if ch != '$' {
-                result.push(ch);
-                continue;
-            }
-
-            if chars.peek() == Some(&'?') {
-                chars.next();
-
-                result.push_str(
-                    &self.last_status.to_string(),
-                );
-
-                continue;
-            }
-
+            if ch != '$' { result.push(ch); continue; }
+            if chars.peek() == Some(&'?') { chars.next(); result.push_str(&self.last_status.to_string()); continue; }
             let mut name = String::new();
-
             while let Some(&next) = chars.peek() {
-                if next.is_alphanumeric() || next == '_' {
-                    name.push(next);
-                    chars.next();
-                } else {
-                    break;
-                }
+                if next.is_alphanumeric() || next == '_' { name.push(next); chars.next(); }
+                else { break; }
             }
-
-            if name.is_empty() {
-                result.push('$');
-                continue;
-            }
-
-            if let Ok(value) = env::var(&name) {
-                result.push_str(&value);
-            }
+            if name.is_empty() { result.push('$'); continue; }
+            if let Ok(value) = env::var(&name) { result.push_str(&value); }
         }
-
         result
     }
-}
 
-fn parse_command(
-    input: &str,
-) -> Result<Vec<String>, &'static str> {
-    let mut args = Vec::new();
-    let mut current = String::new();
-
-    let mut chars = input.chars().peekable();
-
-    let mut single_quotes = false;
-    let mut double_quotes = false;
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\'' if !double_quotes => {
-                single_quotes = !single_quotes;
-            }
-
-            '"' if !single_quotes => {
-                double_quotes = !double_quotes;
-            }
-
-            '\\' if !single_quotes => {
-                match chars.next() {
-                    Some(next) => current.push(next),
-
-                    None => {
-                        return Err("unfinished escape");
+    fn expand_args(&self, args: &[String]) -> Vec<String> {
+        let mut result = Vec::new();
+        for arg in args {
+            let expanded = self.expand_variables(arg);
+            if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
+                if let Ok(paths) = glob::glob(&expanded) {
+                    let mut matched = false;
+                    for path in paths.flatten() {
+                        result.push(path.to_string_lossy().into_owned());
+                        matched = true;
                     }
-                }
-            }
-
-            ch if ch.is_whitespace()
-                && !single_quotes
-                && !double_quotes =>
-            {
-                if !current.is_empty() {
-                    args.push(
-                        std::mem::take(&mut current)
-                    );
-                }
-            }
-
-            ch => {
-                current.push(ch);
-            }
+                    if !matched { result.push(expanded); }
+                } else { result.push(expanded); }
+            } else { result.push(expanded); }
         }
+        result
     }
-
-    if single_quotes || double_quotes {
-        return Err("unterminated quote");
-    }
-
-    if !current.is_empty() {
-        args.push(current);
-    }
-
-    Ok(args)
-}
-
-fn parse_redirection(
-    tokens: Vec<String>,
-) -> Result<CommandLine, &'static str> {
-    let mut command = String::new();
-    let mut args = Vec::new();
-
-    let mut stdin = None;
-    let mut stdout = None;
-    let mut append_stdout = false;
-
-    let mut index = 0;
-
-    while index < tokens.len() {
-        match tokens[index].as_str() {
-            "<" => {
-                index += 1;
-
-                if index >= tokens.len() {
-                    return Err(
-                        "expected file after '<'",
-                    );
-                }
-
-                stdin = Some(tokens[index].clone());
-            }
-
-            ">" => {
-                index += 1;
-
-                if index >= tokens.len() {
-                    return Err(
-                        "expected file after '>'",
-                    );
-                }
-
-                stdout = Some(tokens[index].clone());
-                append_stdout = false;
-            }
-
-            ">>" => {
-                index += 1;
-
-                if index >= tokens.len() {
-                    return Err(
-                        "expected file after '>>'",
-                    );
-                }
-
-                stdout = Some(tokens[index].clone());
-                append_stdout = true;
-            }
-
-            token => {
-                if command.is_empty() {
-                    command = token.to_string();
-                } else {
-                    args.push(token.to_string());
-                }
-            }
-        }
-
-        index += 1;
-    }
-
-    Ok(CommandLine {
-        command,
-        args,
-        stdin,
-        stdout,
-        append_stdout,
-    })
 }
