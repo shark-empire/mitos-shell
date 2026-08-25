@@ -4,10 +4,16 @@ pub enum Token {
     Pipe,           // |
     And,            // &&
     Or,             // ||
-    Semicolon,      // ;
+    Semicolon,_word(&self, word: &str) -> bool {      // ;
     Background,     // &
     RedirectIn,     // <
     RedirectOut,    // >
     AppendOut,      // >>
+    LeftParen,      // (
+    RightParen,     // )
+    LeftBrace,      // {
+    RightBrace,     // }
+    Bang,           // !
+    Newline,
     Eof,
 }
