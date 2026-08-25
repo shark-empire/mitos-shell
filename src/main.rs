@@ -7,6 +7,7 @@ mod shell;
 mod process;
 mod terminal;
 mod expansion;
+mod util;
 
 
 use shell::session::Session;
