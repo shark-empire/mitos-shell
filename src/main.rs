@@ -8,22 +8,68 @@ mod process;
 mod terminal;
 mod expansion;
 mod util;
+mod completion;
 
 
 use shell::session::Session;
+use execution::executor::Executor;
+use lexer::lexer::Lexer;
+use parser::parser::Parser;
 use nix::sys::signal::{signal, SigHandler, Signal};
+use std::fs;
 
 fn main() {
-    // Crucial: Ignore SIGINT (Ctrl+C) and SIGQUIT in the parent shell.
-    // This ensures that when the user presses Ctrl+C, it only kills the 
-    // foreground child process (like `ping`), not the MITOS shell itself.
+    // Ignore interactive signals if running a script
     unsafe {
         let _ = signal(Signal::SIGINT, SigHandler::SigIgn);
         let _ = signal(Signal::SIGQUIT, SigHandler::SigIgn);
     }
 
-    match Session::init() {
-        Ok(mut session) => session.run(),
-        Err(e) => eprintln!("Failed to initialize MITOS shell: {}", e),
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() > 1 {
+        // SCRIPT MODE: mitos script.sh arg1 arg2
+        let script_path = &args[1];
+        let script_args = args[2..].to_vec();
+
+        match fs::read_to_string(script_path) {
+            Ok(content) => {
+                let mut executor = Executor::new();
+                // Push script args into the base context
+                executor.push_context(script_args); 
+                
+                let tokens: Vec<_> = Lexer::new(&content).collect();
+                match Parser::new(tokens).parse() {
+                    Ok(ast) => {
+                        if let Ok(Some(code)) = executor.execute(ast) {
+                            std::process::exit(code);
+                        }
+                        std::process::exit(executor.last_status());
+                    }
+                    Err(e) => {
+                        eprintln!("mitos: {}: syntax error: {}", script_path, e);
+                        std::process::exit(2);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("mitos: {}: {}", script_path, e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        // INTERACTIVE MODE: Drop into REPL
+        match Session::init() {
+            Ok(mut session) => {
+                let code = session.run();
+                std::process::exit(code);
+            }
+            Err(e) => {
+                eprintln!("Failed to initialize MITOS shell: {}", e);
+                std::process::exit(1);
+            }
+        }
     }
 }
+
+
