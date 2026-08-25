@@ -189,6 +189,7 @@ impl Parser {
                 self.expect_token(Token::RightBrace)?;
                 Ok(Node::BraceGroup(Box::new(inner)))
             }
+            Some(Token::Word(w)) if w == "case" => self.parse_case(),
             Some(Token::Word(w)) if w == "if" => self.parse_if(),
             Some(Token::Word(w)) if w == "while" => self.parse_while(),
             Some(Token::Word(w)) if w == "for" => self.parse_for(),
@@ -304,3 +305,46 @@ fn is_assignment(word: &str) -> bool {
         false
     }
 }
+
+fn parse_case(&mut self) -> Result<Node> {
+    self.expect_word("case")?;
+    let word = self.expect_any_word()?;
+    self.expect_word("in")?;
+    self.skip_newlines();
+
+    let mut branches = Vec::new();
+
+    while !self.check_word("esac") {
+        let mut patterns = Vec::new();
+        
+        // Parse patterns (e.g., start|stop)
+        loop {
+            patterns.push(self.expect_any_word()?);
+            if matches!(self.peek(), Some(Token::Word(w)) if w == "|") {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Expect ')' after patterns
+        if !matches!(self.peek(), Some(Token::RightParen)) {
+            return Err(ShellError::Syntax("expected ')' after case patterns".into()));
+        }
+        self.advance();
+
+        let body = self.parse_list()?;
+        branches.push(CaseBranch { patterns, body });
+
+        // Expect ';;' or newline/esac
+        if matches!(self.peek(), Some(Token::Semicolon)) {
+            self.advance();
+            if matches!(self.peek(), Some(Token::Semicolon)) { self.advance(); }
+        }
+        self.skip_newlines();
+    }
+
+    self.expect_word("esac")?;
+    Ok(Node::Case(CaseClause { word, branches }))
+}
+
