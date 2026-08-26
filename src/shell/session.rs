@@ -5,10 +5,11 @@ use crate::execution::executor::Executor;
 use crate::execution::outcome::ExecOutcome;
 use crate::lexer::lexer::Lexer;
 use crate::parser::parser::Parser;
+use rustyline::history::DefaultHistory;
 use rustyline::Editor;
 
 pub struct Session {
-    rl: Editor<MitosHelper>,
+    rl: Editor<MitosHelper, DefaultHistory>,
     executor: Executor,
 }
 
