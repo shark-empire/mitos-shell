@@ -262,6 +262,42 @@ impl Parser {
 
         loop {
             match self.peek() {
+                // Inside parse_simple_command():
+// 1. Handle Array Assignments
+if let Some(Token::ArrayAssign(name)) = self.peek() {
+    let name = name.clone();
+    self.advance(); // consume ArrayAssign
+    self.expect_token(Token::LeftParen)?;
+    
+    let mut elements = Vec::new();
+    while let Some(Token::Word(w)) = self.peek() {
+        elements.push(w.clone());
+        self.advance();
+    }
+    self.expect_token(Token::RightParen)?;
+    assignments.push(Assignment::Array(name, elements));
+    continue;
+}
+
+// 2. Handle Here-Docs and Here-Strings in redirections
+Some(Token::HereString) => {
+    self.advance();
+    let word = self.expect_any_word()?;
+    redirects.push(Redirect::HereString(word));
+}
+Some(Token::HereDocStart(strip_tabs)) => {
+    self.advance();
+    let delimiter = self.expect_any_word()?;
+    
+    // In a real shell, the body is read from subsequent lines.
+    // For MITOS, since rustyline gives us the whole multi-line string at once,
+    // we can just read tokens until we find the delimiter on its own line.
+    // (Simplified: just read the next word as the body for now, or implement 
+    // a line-by-line reader in the Executor).
+    // Let's use a placeholder that the Executor will resolve.
+              redirects.push(Redirect::HereDoc(delimiter, strip_tabs, true));
+           }
+
                 Some(Token::Word(w)) => {
                     // VAR=value allowed as a prefix before the first real argument.
                     if args.is_empty() && is_assignment(w) {
