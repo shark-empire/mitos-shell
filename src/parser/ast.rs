@@ -80,3 +80,18 @@ pub struct CaseBranch {
     pub body: Node,
 }
 
+#[derive(Debug, Clone)]
+pub enum Redirect {
+    Input(String),
+    Output(String),
+    Append(String),
+    HereDoc(String, bool, bool), // (body, strip_tabs, expand_vars)
+    HereString(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum Assignment {
+    Scalar(String, String),
+    Array(String, Vec<String>),
+}
+
