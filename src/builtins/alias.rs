@@ -1,34 +1,30 @@
 // src/builtins/alias.rs
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
-lazy_static! {
-    pub static ref ALIASES: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
+// No lazy_static dependency is declared in Cargo.toml, so use a OnceLock instead.
+fn aliases() -> &'static Mutex<HashMap<String, String>> {
+    static ALIASES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    ALIASES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// If you don't want the lazy_static dependency, use a OnceLock:
-// pub fn aliases() -> &'static Mutex<HashMap<String, String>> {
-//     static ALIASES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
-//     ALIASES.get_or_init(|| Mutex::new(HashMap::new()))
-// }
-
 pub fn set(name: &str, value: &str) {
-    ALIASES
+    aliases()
         .lock()
         .unwrap()
         .insert(name.to_string(), value.to_string());
 }
 
 pub fn get(name: &str) -> Option<String> {
-    ALIASES.lock().unwrap().get(name).cloned()
+    aliases().lock().unwrap().get(name).cloned()
 }
 
 pub fn remove(name: &str) -> bool {
-    ALIASES.lock().unwrap().remove(name).is_some()
+    aliases().lock().unwrap().remove(name).is_some()
 }
 
 pub fn list() {
-    let aliases = ALIASES.lock().unwrap();
+    let aliases = aliases().lock().unwrap();
     for (name, value) in aliases.iter() {
         println!("alias {}='{}'", name, value);
     }

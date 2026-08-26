@@ -13,7 +13,7 @@ use nix::sys::signal::{killpg, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use std::io::{self, Write};
 
-pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
+pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutcome> {
     let name = args.first()?;
     match name.as_str() {
         // Control flow
@@ -65,7 +65,7 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
                 };
                 println!("[{}]  {}  {}", job.id, state, job.command);
             }
-            Some(0)
+            Some(ExecOutcome::Status(0))
         }
         "fg" => {
             // Bring most recently stopped job to foreground
@@ -86,8 +86,12 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
                 // Wait for it to finish or stop again
                 loop {
                     match waitpid(job.pgid, Some(WaitPidFlag::WUNTRACED)) {
-                        Ok(WaitStatus::Exited(_, _)) | Ok(WaitStatus::Signaled(_, _, _)) => {
-                            job.status = JobStatus::Done;
+                        Ok(WaitStatus::Exited(_, code)) => {
+                            job.status = JobStatus::Exited(code);
+                            break;
+                        }
+                        Ok(WaitStatus::Signaled(_, sig, _)) => {
+                            job.status = JobStatus::Signaled(sig);
                             break;
                         }
                         Ok(WaitStatus::Stopped(_, _)) => {
@@ -106,10 +110,10 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
                 if let Some(tty) = &executor.tty {
                     tty.take_terminal_back();
                 }
-                Some(0)
+                Some(ExecOutcome::Status(0))
             } else {
                 eprintln!("fg: no current job");
-                Some(1)
+                Some(ExecOutcome::Status(1))
             }
         }
         "bg" => {
@@ -124,10 +128,10 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
                 job.status = JobStatus::Running;
                 killpg(job.pgid, Signal::SIGCONT).unwrap();
                 println!("[{}]+ {} &", job.id, job.command);
-                Some(0)
+                Some(ExecOutcome::Status(0))
             } else {
                 eprintln!("bg: no current job");
-                Some(1)
+                Some(ExecOutcome::Status(1))
             }
         }
 
