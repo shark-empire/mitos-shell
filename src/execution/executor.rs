@@ -22,6 +22,7 @@ pub struct Executor {
     context_stack: Vec<Vec<String>>, 
     pub options: crate::config::options::ShellOptions,
     pub traps: HashMap<String, String>,
+    pub arrays: HashMap<String, Vec<String>>,
 }
 
 impl Executor {
@@ -183,6 +184,20 @@ impl Executor {
                 .join(" | ");
             eprintln!("+ {}", cmd_str);
         }
+ for assignment in &first.assignments {
+    match assignment {
+        Assignment::Scalar(k, v) => set_var(k, v),
+        Assignment::Array(name, elements) => {
+            let expander = Expander::new(self.last_status, self.current_args().to_vec(), self.options.clone(), self.arrays.clone());
+            let expanded: Vec<String> = elements.iter().flat_map(|e| {
+                let tokens: Vec<Token> = Lexer::new(e).collect();
+                expander.expand_tokens(tokens).unwrap_or_default()
+            }).collect();
+            self.arrays.insert(name.clone(), expanded);
+        }
+    }
+}
+
 
         let mut expanded_commands = Vec::new();
 
@@ -396,6 +411,17 @@ impl Executor {
                                     Mode::from_bits(0o644).unwrap())?;
                                 dup2(fd, 1)?; let _ = close(fd);
                             }
+                            Redirect::HereString(s) => {
+    let expander = Expander::new(self.last_status, self.current_args().to_vec(), self.options.clone(), self.arrays.clone());
+    let expanded = expander.expand_vars(s).unwrap_or_default();
+    let path = format!("/tmp/mitos_heredoc_{}", std::process::id());
+    fs::write(&path, expanded).unwrap();
+    let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
+    dup2(fd, 0)?; let _ = close(fd);
+    let _ = fs::remove_file(path); // Clean up
+}
+// Similar logic for HereDoc...
+
                         }
                     }
 
