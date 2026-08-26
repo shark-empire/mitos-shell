@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  quality:
+    name: Format, Lint, Check, Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Installs system libraries required by your project.
+      # libcrypt-dev is required because your build.rs links against the C `crypt` library
+      # for the `lala` privilege manager.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libcrypt-dev
+
+      # Installs the latest stable Rust toolchain with rustfmt and clippy components.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Caches Cargo dependencies and build artifacts to speed up future runs.
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # 1. FORMAT: Ensures all code follows standard Rust style guidelines.
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # 2. LINT: Runs Clippy to catch common mistakes and improve code quality.
+      # The `-D warnings` flag treats all warnings as errors, enforcing strict code quality.
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # 3. CHECK: Fast compilation check without producing binaries.
+      - name: Cargo Check
+        run: cargo check --all-targets --all-features
+
+      # 4. BUILD: Compiles the project in both debug and release modes.
+      - name: Build (Debug)
+        run: cargo build --verbose
+
+      - name: Build (Release)
+        run: cargo build --release --verbose
+
+      # 5. TEST: Runs all unit and integration tests.
+      - name: Run tests
+        run: cargo test --verbose
