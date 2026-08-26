@@ -30,13 +30,11 @@ fn main() {
     }
 
     // Escalate privileges to root (UID 0, GID 0)
-    nix::unistd::setgid(Gid::from_raw(0))
-        .expect("lala: failed to set GID (is it setuid root?)");
-    nix::unistd::setuid(Uid::from_raw(0))
-        .expect("lala: failed to set UID (is it setuid root?)");
+    nix::unistd::setgid(Gid::from_raw(0)).expect("lala: failed to set GID (is it setuid root?)");
+    nix::unistd::setuid(Uid::from_raw(0)).expect("lala: failed to set UID (is it setuid root?)");
 
     exec_command(&args[1..]);
-}
+
 
 fn exec_command(args: &[String]) -> ! {
     let prog = CString::new(args[0].as_str()).unwrap();
