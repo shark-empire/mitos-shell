@@ -17,9 +17,12 @@ pub struct Executor {
     pub tty: Option<TtyManager>,
     pub jobs: JobTable,
     pub last_status: i32,
+
     functions: HashMap<String, FunctionDef>,
     /// Stack of positional parameters. The top of the stack is the current $@.
     context_stack: Vec<Vec<String>>, 
+    pub options: crate::config::options::ShellOptions,
+    pub traps: std::collections::HashMap<String, String>, // For `trap`
 }
 
 impl Executor {
