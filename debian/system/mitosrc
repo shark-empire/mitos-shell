@@ -1,0 +1,7 @@
+# /etc/mitosrc - System-wide MITOS configuration
+if [ -z "$PATH" ]; then
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+fi
+alias ll='ls -la'
+alias la='ls -A'
+alias ..='cd ..'
