@@ -43,6 +43,47 @@ impl Iterator for Lexer {
                 if self.peek() == Some('>') { self.advance(); Some(Token::AppendOut) }
                 else { Some(Token::RedirectOut) }
             }
+            // Inside the match statement in Lexer::next():
+'<' => {
+    if self.peek() == Some('<') {
+        self.advance();
+        if self.peek() == Some('<') {
+            self.advance();
+            Some(Token::HereString) // <<<
+        } else {
+            let strip_tabs = if self.peek() == Some('-') { self.advance(); true } else { false };
+            // We emit a start token; the Parser/Executor will handle reading the body 
+            // to keep the Lexer simple and stateless across lines.
+            Some(Token::HereDocStart(strip_tabs)) 
+        }
+    } else {
+        Some(Token::RedirectIn)
+    }
+}
+
+// Handle Array Assignments: If a word ends with '=', and the next char is '(', it's an array.
+// We handle this by checking if the word ends with '=' and peeking ahead.
+_ => {
+    let mut word = String::new();
+    word.push(ch);
+    while let Some(c) = self.peek() {
+        if c.is_whitespace() || "|&;<>(){}!\n".contains(c) { break; }
+        word.push(c);
+        self.advance();
+    }
+    
+    // Array detection: if word ends with '=' and next non-whitespace is '('
+    if word.ends_with('=') {
+        let mut temp_pos = self.pos;
+        while temp_pos < self.input.len() && self.input[temp_pos].is_whitespace() { temp_pos += 1; }
+        if temp_pos < self.input.len() && self.input[temp_pos] == '(' {
+            return Some(Token::ArrayAssign(word.trim_end_matches('=').to_string()));
+               }
+            }
+
+             Some(Token::Word(word))
+        }
+
   
        '\'' => {
           let mut word = String::new();
