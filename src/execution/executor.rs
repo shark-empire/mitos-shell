@@ -257,7 +257,11 @@ fn exec_function(&mut self, fdef: &FunctionDef, args: &[String]) -> Result<ExecO
 
     fn exec_case(&mut self, c: &CaseClause) -> Result<ExecOutcome> {
     // Expand the target word
-    let expander = Expander::new(self.last_status, self.current_args().to_vec());
+    let expander = Expander::new(
+    self.last_status, 
+    self.current_args().to_vec(), 
+    self.options.clone() // <--- ADD THIS
+      );
     let target = expander.expand_args(vec![c.word.clone()]).pop().unwrap_or_default();
 
     for branch in &c.branches {
