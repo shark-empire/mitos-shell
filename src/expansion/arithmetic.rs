@@ -28,7 +28,11 @@ fn extract_arithmetic(chars: &[char], start: usize) -> Option<(String, usize)> {
     let mut depth = 1;
     let mut i = start;
     while i + 1 < chars.len() {
-        if chars[i] == '(' && chars[i + 1] == '(' { depth += 1; i += 2; continue; }
+        if chars[i] == '(' && chars[i + 1] == '(' {
+            depth += 1;
+            i += 2;
+            continue;
+        }
         if chars[i] == ')' && chars[i + 1] == ')' {
             depth -= 1;
             if depth == 0 {
@@ -51,10 +55,15 @@ struct ArithParser {
 }
 
 pub fn evaluate(expr: &str) -> Result<i64, ()> {
-    let mut p = ArithParser { chars: expr.chars().collect(), pos: 0 };
+    let mut p = ArithParser {
+        chars: expr.chars().collect(),
+        pos: 0,
+    };
     let value = p.parse_expr()?;
     p.skip_ws();
-    if p.pos != p.chars.len() { return Err(()); }
+    if p.pos != p.chars.len() {
+        return Err(());
+    }
     Ok(value)
 }
 
@@ -65,15 +74,23 @@ impl ArithParser {
         }
     }
 
-    fn peek(&self) -> Option<char> { self.chars.get(self.pos).copied() }
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
 
     fn parse_expr(&mut self) -> Result<i64, ()> {
         let mut value = self.parse_term()?;
         loop {
             self.skip_ws();
             match self.peek() {
-                Some('+') => { self.pos += 1; value += self.parse_term()?; }
-                Some('-') => { self.pos += 1; value -= self.parse_term()?; }
+                Some('+') => {
+                    self.pos += 1;
+                    value += self.parse_term()?;
+                }
+                Some('-') => {
+                    self.pos += 1;
+                    value -= self.parse_term()?;
+                }
                 _ => break,
             }
         }
@@ -85,17 +102,24 @@ impl ArithParser {
         loop {
             self.skip_ws();
             match self.peek() {
-                Some('*') => { self.pos += 1; value *= self.parse_factor()?; }
+                Some('*') => {
+                    self.pos += 1;
+                    value *= self.parse_factor()?;
+                }
                 Some('/') => {
                     self.pos += 1;
                     let rhs = self.parse_factor()?;
-                    if rhs == 0 { return Err(()); }
+                    if rhs == 0 {
+                        return Err(());
+                    }
                     value /= rhs;
                 }
                 Some('%') => {
                     self.pos += 1;
                     let rhs = self.parse_factor()?;
-                    if rhs == 0 { return Err(()); }
+                    if rhs == 0 {
+                        return Err(());
+                    }
                     value %= rhs;
                 }
                 _ => break,
@@ -111,12 +135,22 @@ impl ArithParser {
                 self.pos += 1;
                 let value = self.parse_expr()?;
                 self.skip_ws();
-                if self.peek() == Some(')') { self.pos += 1; Ok(value) } else { Err(()) }
+                if self.peek() == Some(')') {
+                    self.pos += 1;
+                    Ok(value)
+                } else {
+                    Err(())
+                }
             }
             Some(c) if c.is_ascii_digit() => {
                 let mut num_str = String::new();
                 while let Some(c) = self.peek() {
-                    if c.is_ascii_digit() { num_str.push(c); self.pos += 1; } else { break; }
+                    if c.is_ascii_digit() {
+                        num_str.push(c);
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
                 }
                 num_str.parse::<i64>().map_err(|_| ())
             }
@@ -124,7 +158,12 @@ impl ArithParser {
                 // Variable reference inside arithmetic
                 let mut name = String::new();
                 while let Some(c) = self.peek() {
-                    if c.is_alphanumeric() || c == '_' { name.push(c); self.pos += 1; } else { break; }
+                    if c.is_alphanumeric() || c == '_' {
+                        name.push(c);
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
                 }
                 let value = std::env::var(&name).unwrap_or_default();
                 value.parse::<i64>().map_err(|_| ())

@@ -1,16 +1,16 @@
 pub mod alias;
-pub mod read;
-pub mod test;
-pub mod set;
 pub mod eval;
+pub mod read;
+pub mod set;
+pub mod test;
 pub mod trap;
 
-use nix::sys::signal::{killpg, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use crate::execution::executor::Executor;
 use crate::execution::outcome::ExecOutcome;
-use crate::util::set_var;
 use crate::process::job::JobStatus;
+use crate::util::set_var;
+use nix::sys::signal::{killpg, Signal};
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use std::io::{self, Write};
 
 pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
@@ -28,34 +28,32 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
             Some(ExecOutcome::Exit(code))
         }
         "set" => {
-    // Note: We need mutable access to options, so we handle 'set' 
-    // directly in the Executor, or pass a mutable reference. 
-    // For simplicity, let's return a special outcome or handle it in Executor.
-    None 
-          }
+            // Note: We need mutable access to options, so we handle 'set'
+            // directly in the Executor, or pass a mutable reference.
+            // For simplicity, let's return a special outcome or handle it in Executor.
+            None
+        }
 
         // Status builtins
         "true" | ":" => Some(ExecOutcome::Status(0)),
         "false" => Some(ExecOutcome::Status(1)),
 
-                // Input/output.
+        // Input/output.
         "echo" => Some(ExecOutcome::Status(builtin_echo(args))),
         "read" => Some(ExecOutcome::Status(read::execute(args))),
         // Directory / env
         "cd" => Some(ExecOutcome::Status(builtin_cd(args))),
-       "pwd" => {
-            match std::env::current_dir() {
-                Ok(path) => {
-                    println!("{}", path.display());
-                    Some(ExecOutcome::Status(0))
-                }
-
-                Err(error) => {
-                    eprintln!("pwd: {}", error);
-                    Some(ExecOutcome::Status(1))
-                }
+        "pwd" => match std::env::current_dir() {
+            Ok(path) => {
+                println!("{}", path.display());
+                Some(ExecOutcome::Status(0))
             }
-        }
+
+            Err(error) => {
+                eprintln!("pwd: {}", error);
+                Some(ExecOutcome::Status(1))
+            }
+        },
         "export" => Some(ExecOutcome::Status(builtin_export(args))),
         "test" | "[" => Some(ExecOutcome::Status(test::execute_test(args))),
         "jobs" => {
@@ -71,14 +69,20 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
         }
         "fg" => {
             // Bring most recently stopped job to foreground
-            if let Some(job) = executor.jobs.jobs.iter_mut().rev().find(|j| j.status == JobStatus::Stopped) {
+            if let Some(job) = executor
+                .jobs
+                .jobs
+                .iter_mut()
+                .rev()
+                .find(|j| j.status == JobStatus::Stopped)
+            {
                 job.status = JobStatus::Running;
                 killpg(job.pgid, Signal::SIGCONT).unwrap();
-                
+
                 if let Some(tty) = &executor.tty {
                     tty.give_terminal_to(job.pgid);
                 }
-                
+
                 // Wait for it to finish or stop again
                 loop {
                     match waitpid(job.pgid, Some(WaitPidFlag::WUNTRACED)) {
@@ -98,7 +102,7 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
                         _ => {}
                     }
                 }
-                
+
                 if let Some(tty) = &executor.tty {
                     tty.take_terminal_back();
                 }
@@ -110,7 +114,13 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
         }
         "bg" => {
             // Resume stopped job in background
-            if let Some(job) = executor.jobs.jobs.iter_mut().rev().find(|j| j.status == JobStatus::Stopped) {
+            if let Some(job) = executor
+                .jobs
+                .jobs
+                .iter_mut()
+                .rev()
+                .find(|j| j.status == JobStatus::Stopped)
+            {
                 job.status = JobStatus::Running;
                 killpg(job.pgid, Signal::SIGCONT).unwrap();
                 println!("[{}]+ {} &", job.id, job.command);
@@ -127,10 +137,7 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
                 alias::list();
             } else if let Some(definition) = args.get(1) {
                 if let Some((name, value)) = definition.split_once('=') {
-                    alias::set(
-                        name,
-                        value.trim_matches('\'').trim_matches('"'),
-                    );
+                    alias::set(name, value.trim_matches('\'').trim_matches('"'));
                 } else {
                     eprintln!("alias: expected name=value");
                     return Some(ExecOutcome::Status(1));
@@ -140,10 +147,7 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
             Some(ExecOutcome::Status(0))
         }
         "unalias" => {
-            let removed = args
-                .get(1)
-                .map(|name| alias::remove(name))
-                .unwrap_or(false);
+            let removed = args.get(1).map(|name| alias::remove(name)).unwrap_or(false);
 
             if removed {
                 Some(ExecOutcome::Status(0))
@@ -153,7 +157,7 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
             }
         }
 
-        _ => None // Not a builtin, fallback to external execution
+        _ => None, // Not a builtin, fallback to external execution
     }
 }
 
@@ -183,10 +187,7 @@ fn builtin_echo(args: &[String]) -> i32 {
 }
 
 fn builtin_cd(args: &[String]) -> i32 {
-    let dir = args
-        .get(1)
-        .map(|value| value.as_str())
-        .unwrap_or("~");
+    let dir = args.get(1).map(|value| value.as_str()).unwrap_or("~");
 
     let path = if dir == "~" {
         dirs::home_dir().unwrap_or_default()

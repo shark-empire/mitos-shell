@@ -8,7 +8,6 @@ pub enum ExecOutcome {
     Eval(String), // NEW: Tells executor to parse and run this string
 }
 
-
 impl ExecOutcome {
     pub fn status_or_zero(self) -> i32 {
         match self {

@@ -15,9 +15,12 @@ impl Helper for MitosHelper {}
 impl Completer for MitosHelper {
     type Candidate = Pair;
 
-    fn complete(&self, line: &str, pos: usize, _ctx: &Context<'_>)
-        -> Result<(usize, Vec<Pair>), rustyline::error::ReadlineError>
-    {
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> Result<(usize, Vec<Pair>), rustyline::error::ReadlineError> {
         let (start, word) = extract_word(line, pos);
 
         if let Some(var_prefix) = word.strip_prefix('$') {
@@ -49,11 +52,17 @@ impl Validator for MitosHelper {
 
 impl Hinter for MitosHelper {
     type Hint = String;
-    fn hint(&self, _line: &str, _pos: usize, _ctx: &Context<'_>) -> Option<String> { None }
+    fn hint(&self, _line: &str, _pos: usize, _ctx: &Context<'_>) -> Option<String> {
+        None
+    }
 }
 
 impl Highlighter for MitosHelper {
-    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(&'s self, prompt: &'p str, _default: bool) -> Cow<'b, str> {
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        _default: bool,
+    ) -> Cow<'b, str> {
         Cow::Owned(prompt.to_string())
     }
 }
@@ -62,7 +71,9 @@ impl Highlighter for MitosHelper {
 /// closed quotes, and no trailing continuation operator.
 fn is_complete(input: &str) -> bool {
     let trimmed = input.trim_end();
-    if trimmed.ends_with('\\') { return false; }
+    if trimmed.ends_with('\\') {
+        return false;
+    }
     if trimmed.ends_with("&&") || trimmed.ends_with("||") || trimmed.ends_with('|') {
         return false;
     }
@@ -90,13 +101,17 @@ fn is_complete(input: &str) -> bool {
     let mut chars = input.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => { chars.next(); }
+            '\\' => {
+                chars.next();
+            }
             '\'' if !double => single = !single,
             '"' if !single => double = !double,
             _ => {}
         }
     }
-    if single || double { return false; }
+    if single || double {
+        return false;
+    }
 
     if_n <= 0 && done_n <= 0 && brace <= 0 && paren <= 0
 }
@@ -120,7 +135,10 @@ fn complete_commands(prefix: &str) -> Vec<Pair> {
                 for e in entries.flatten() {
                     let name = e.file_name().to_string_lossy().into_owned();
                     if name.starts_with(prefix) && seen.insert(name.clone()) {
-                        out.push(Pair { display: name.clone(), replacement: name });
+                        out.push(Pair {
+                            display: name.clone(),
+                            replacement: name,
+                        });
                     }
                 }
             }
@@ -133,15 +151,27 @@ fn complete_commands(prefix: &str) -> Vec<Pair> {
 fn complete_files(prefix: &str) -> Vec<Pair> {
     let mut out = Vec::new();
     let (dir, partial) = split_path(prefix);
-    let search = if dir.is_empty() { std::path::Path::new(".") } else { std::path::Path::new(&dir) };
+    let search = if dir.is_empty() {
+        std::path::Path::new(".")
+    } else {
+        std::path::Path::new(&dir)
+    };
     if let Ok(entries) = std::fs::read_dir(search) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.starts_with(&partial) {
-                let mut repl = if dir.is_empty() { name.clone() }
-                    else { format!("{}/{}", dir.trim_end_matches('/'), name) };
-                if e.path().is_dir() { repl.push('/'); }
-                out.push(Pair { display: name, replacement: repl });
+                let mut repl = if dir.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}/{}", dir.trim_end_matches('/'), name)
+                };
+                if e.path().is_dir() {
+                    repl.push('/');
+                }
+                out.push(Pair {
+                    display: name,
+                    replacement: repl,
+                });
             }
         }
     }
@@ -159,6 +189,9 @@ fn split_path(prefix: &str) -> (String, String) {
 fn complete_variables(prefix: &str) -> Vec<Pair> {
     std::env::vars()
         .filter(|(k, _)| k.starts_with(prefix))
-        .map(|(k, _)| Pair { display: format!("${}", k), replacement: format!("${}", k) })
+        .map(|(k, _)| Pair {
+            display: format!("${}", k),
+            replacement: format!("${}", k),
+        })
         .collect()
 }

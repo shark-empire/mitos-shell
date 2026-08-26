@@ -19,7 +19,10 @@ pub enum Node {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ListOp { And, Or }
+pub enum ListOp {
+    And,
+    Or,
+}
 
 #[derive(Debug, Clone)]
 pub struct Pipeline {
@@ -82,11 +85,8 @@ pub struct CaseBranch {
     pub body: Node,
 }
 
-
-
 #[derive(Debug, Clone)]
 pub enum Assignment {
     Scalar(String, String),
     Array(String, Vec<String>),
 }
-

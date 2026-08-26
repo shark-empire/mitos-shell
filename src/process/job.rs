@@ -1,5 +1,5 @@
-use nix::unistd::Pid;
 use nix::sys::signal::Signal;
+use nix::unistd::Pid;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JobStatus {
@@ -23,13 +23,21 @@ pub struct JobTable {
 
 impl JobTable {
     pub fn new() -> Self {
-        Self { jobs: Vec::new(), next_id: 1 }
+        Self {
+            jobs: Vec::new(),
+            next_id: 1,
+        }
     }
 
     pub fn add(&mut self, pgid: Pid, command: String) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        self.jobs.push(Job { id, pgid, command, status: JobStatus::Running });
+        self.jobs.push(Job {
+            id,
+            pgid,
+            command,
+            status: JobStatus::Running,
+        });
         id
     }
 
@@ -40,6 +48,7 @@ impl JobTable {
     }
 
     pub fn cleanup_finished(&mut self) {
-        self.jobs.retain(|j| matches!(j.status, JobStatus::Running | JobStatus::Stopped));
+        self.jobs
+            .retain(|j| matches!(j.status, JobStatus::Running | JobStatus::Stopped));
     }
 }

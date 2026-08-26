@@ -1,23 +1,21 @@
-mod error;
-mod lexer;
-mod parser;
-mod execution;
 mod builtins;
-mod shell;
-mod process;
-mod terminal;
-mod expansion;
-mod util;
 mod completion;
 mod config;
+mod error;
+mod execution;
+mod expansion;
+mod lexer;
+mod parser;
+mod process;
+mod shell;
+mod terminal;
+mod util;
 
-
-
-use shell::session::Session;
 use execution::executor::Executor;
 use lexer::lexer::Lexer;
-use parser::parser::Parser;
 use nix::sys::signal::{signal, SigHandler, Signal};
+use parser::parser::Parser;
+use shell::session::Session;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -27,7 +25,8 @@ fn main() {
     // Register signal handler
     ctrlc::set_handler(move || {
         INTERRUPTED.store(true, Ordering::SeqCst);
-    }).expect("Error setting Ctrl-C handler");
+    })
+    .expect("Error setting Ctrl-C handler");
     // Ignore interactive signals if running a script
     unsafe {
         let _ = signal(Signal::SIGINT, SigHandler::SigIgn);
@@ -45,8 +44,8 @@ fn main() {
             Ok(content) => {
                 let mut executor = Executor::new();
                 // Push script args into the base context
-                executor.push_context(script_args); 
-                
+                executor.push_context(script_args);
+
                 let tokens: Vec<_> = Lexer::new(&content).collect();
                 match Parser::new(tokens).parse() {
                     Ok(ast) => {
@@ -80,5 +79,3 @@ fn main() {
         }
     }
 }
-
-

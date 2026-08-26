@@ -9,21 +9,21 @@ use crate::parser::parser::Parser;
 use crate::process::job::JobTable;
 use crate::terminal::tty::TtyManager;
 use crate::util::set_var;
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::unistd::read as nix_read;
 use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
 use std::fs;
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-use nix::unistd::read as nix_read;
-use std::os::fd::BorrowedFd;
 use std::io::{self, Write};
+use std::os::fd::BorrowedFd;
 
 pub struct Executor {
     pub tty: Option<TtyManager>,
     pub jobs: JobTable,
     pub last_status: i32,
     functions: HashMap<String, FunctionDef>,
-    context_stack: Vec<Vec<String>>, 
+    context_stack: Vec<Vec<String>>,
     pub options: crate::config::options::ShellOptions,
     pub traps: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
@@ -60,13 +60,11 @@ impl Executor {
             .unwrap_or(&[])
     }
 
-    pub fn last_status(&self) -> i32 { self.last_status }
+    pub fn last_status(&self) -> i32 {
+        self.last_status
+    }
 
-    pub fn source_file(
-        &mut self,
-        path: &str,
-        args: &[String],
-    ) -> Result<ExecOutcome> {
+    pub fn source_file(&mut self, path: &str, args: &[String]) -> Result<ExecOutcome> {
         let content = match fs::read_to_string(path) {
             Ok(content) => content,
             Err(error) => {
@@ -123,7 +121,7 @@ impl Executor {
     fn exec_node(&mut self, node: &Node) -> Result<ExecOutcome> {
         if crate::main::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
             crate::main::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
-            
+
             if let Some(cmd) = self.traps.get("INT").cloned() {
                 let tokens: Vec<_> = Lexer::new(&cmd).collect();
                 if let Ok(ast) = Parser::new(tokens).parse() {
@@ -147,7 +145,11 @@ impl Executor {
                         ListOp::And => s == 0,
                         ListOp::Or => s != 0,
                     };
-                    if run_right { self.exec_node(r) } else { Ok(ExecOutcome::Status(s)) }
+                    if run_right {
+                        self.exec_node(r)
+                    } else {
+                        Ok(ExecOutcome::Status(s))
+                    }
                 }
                 other => Ok(other),
             },
@@ -166,12 +168,16 @@ impl Executor {
     }
 
     fn exec_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecOutcome> {
-        if pipeline.commands.len() == 1 && pipeline.commands[0].args.first().map(|s| s.as_str()) == Some("set") {
+        if pipeline.commands.len() == 1
+            && pipeline.commands[0].args.first().map(|s| s.as_str()) == Some("set")
+        {
             let status = builtins::set::execute(&pipeline.commands[0].args, &mut self.options);
             return Ok(ExecOutcome::Status(status));
         }
 
-        if pipeline.commands.len() == 1 && pipeline.commands[0].args.first().map(|s| s.as_str()) == Some("eval") {
+        if pipeline.commands.len() == 1
+            && pipeline.commands[0].args.first().map(|s| s.as_str()) == Some("eval")
+        {
             if let Some(code) = builtins::eval::execute(&pipeline.commands[0].args) {
                 return Ok(ExecOutcome::Eval(code));
             }
@@ -179,7 +185,9 @@ impl Executor {
         }
 
         if self.options.xtrace {
-            let cmd_str = pipeline.commands.iter()
+            let cmd_str = pipeline
+                .commands
+                .iter()
                 .map(|c| c.args.join(" "))
                 .collect::<Vec<_>>()
                 .join(" | ");
@@ -279,8 +287,8 @@ impl Executor {
 
     fn exec_for(&mut self, c: &ForClause) -> Result<ExecOutcome> {
         let expander = Expander::new(
-            self.last_status, 
-            self.current_args().to_vec(), 
+            self.last_status,
+            self.current_args().to_vec(),
             self.options.clone(),
             self.arrays.clone(),
         );
@@ -306,14 +314,18 @@ impl Executor {
 
     fn exec_case(&mut self, c: &CaseClause) -> Result<ExecOutcome> {
         let expander = Expander::new(
-            self.last_status, 
-            self.current_args().to_vec(), 
+            self.last_status,
+            self.current_args().to_vec(),
             self.options.clone(),
             self.arrays.clone(),
         );
-        
+
         let tokens: Vec<Token> = Lexer::new(&c.word).collect();
-        let target = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+        let target = expander
+            .expand_tokens(tokens)?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
 
         for branch in &c.branches {
             for pattern in &branch.patterns {
@@ -372,43 +384,63 @@ impl Executor {
 
         let n = commands.len();
         let mut pipes: Vec<(i32, i32)> = Vec::new();
-        for _ in 0..n.saturating_sub(1) { pipes.push(pipe()?); }
+        for _ in 0..n.saturating_sub(1) {
+            pipes.push(pipe()?);
+        }
 
         let mut children = Vec::new();
 
         for (i, cmd) in commands.iter().enumerate() {
-            if cmd.args.is_empty() { continue; }
+            if cmd.args.is_empty() {
+                continue;
+            }
 
             match unsafe { fork()? } {
                 ForkResult::Parent { child } => children.push(child),
                 ForkResult::Child => {
-                    if i > 0 { dup2(pipes[i - 1].0, 0)?; }
-                    if i < n - 1 { dup2(pipes[i].1, 1)?; }
-                    for (r, w) in &pipes { let _ = close(*r); let _ = close(*w); }
+                    if i > 0 {
+                        dup2(pipes[i - 1].0, 0)?;
+                    }
+                    if i < n - 1 {
+                        dup2(pipes[i].1, 1)?;
+                    }
+                    for (r, w) in &pipes {
+                        let _ = close(*r);
+                        let _ = close(*w);
+                    }
 
                     for redir in &cmd.redirects {
                         match redir {
                             Redirect::Input(p) => {
                                 let fd = open(p.as_str(), OFlag::O_RDONLY, Mode::empty())?;
-                                dup2(fd, 0)?; let _ = close(fd);
+                                dup2(fd, 0)?;
+                                let _ = close(fd);
                             }
                             Redirect::Output(p) => {
-                                let fd = open(p.as_str(),
+                                let fd = open(
+                                    p.as_str(),
                                     OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
-                                    Mode::from_bits(0o644).unwrap())?;
-                                dup2(fd, 1)?; let _ = close(fd);
+                                    Mode::from_bits(0o644).unwrap(),
+                                )?;
+                                dup2(fd, 1)?;
+                                let _ = close(fd);
                             }
                             Redirect::Append(p) => {
-                                let fd = open(p.as_str(),
+                                let fd = open(
+                                    p.as_str(),
                                     OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
-                                    Mode::from_bits(0o644).unwrap())?;
-                                dup2(fd, 1)?; let _ = close(fd);
+                                    Mode::from_bits(0o644).unwrap(),
+                                )?;
+                                dup2(fd, 1)?;
+                                let _ = close(fd);
                             }
                             Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
-                                let path = format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
+                                let path =
+                                    format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
                                 let _ = fs::write(&path, s);
                                 let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
-                                dup2(fd, 0)?; let _ = close(fd);
+                                dup2(fd, 0)?;
+                                let _ = close(fd);
                                 let _ = fs::remove_file(path);
                             }
                         }
@@ -420,7 +452,9 @@ impl Executor {
                         }
                     }
 
-                    let c_args: Vec<CString> = cmd.args.iter()
+                    let c_args: Vec<CString> = cmd
+                        .args
+                        .iter()
                         .map(|s| CString::new(s.as_str()).unwrap())
                         .collect();
                     let _ = nix::unistd::execvp(&c_args[0], &c_args);
@@ -430,7 +464,10 @@ impl Executor {
             }
         }
 
-        for (r, w) in pipes { let _ = close(r); let _ = close(w); }
+        for (r, w) in pipes {
+            let _ = close(r);
+            let _ = close(w);
+        }
 
         let mut last = 0;
         for child in children {
@@ -482,8 +519,14 @@ impl Executor {
             match assignment {
                 Assignment::Scalar(key, value) => {
                     let tokens: Vec<Token> = Lexer::new(value).collect();
-                    let expanded_value = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
-                    expanded.assignments.push(Assignment::Scalar(key.clone(), expanded_value));
+                    let expanded_value = expander
+                        .expand_tokens(tokens)?
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
+                    expanded
+                        .assignments
+                        .push(Assignment::Scalar(key.clone(), expanded_value));
                 }
                 Assignment::Array(name, elements) => {
                     let mut expanded_elements = Vec::new();
@@ -491,7 +534,9 @@ impl Executor {
                         let tokens: Vec<Token> = Lexer::new(e).collect();
                         expanded_elements.extend(expander.expand_tokens(tokens)?);
                     }
-                    expanded.assignments.push(Assignment::Array(name.clone(), expanded_elements));
+                    expanded
+                        .assignments
+                        .push(Assignment::Array(name.clone(), expanded_elements));
                 }
             }
         }
@@ -500,17 +545,29 @@ impl Executor {
             match redirect {
                 Redirect::Input(path) => {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
-                    let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    let p = expander
+                        .expand_tokens(tokens)?
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
                     expanded.redirects.push(Redirect::Input(p));
                 }
                 Redirect::Output(path) => {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
-                    let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    let p = expander
+                        .expand_tokens(tokens)?
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
                     expanded.redirects.push(Redirect::Output(p));
                 }
                 Redirect::Append(path) => {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
-                    let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    let p = expander
+                        .expand_tokens(tokens)?
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
                     expanded.redirects.push(Redirect::Append(p));
                 }
                 Redirect::HereString(s) => {
@@ -519,7 +576,9 @@ impl Executor {
                     expanded.redirects.push(Redirect::HereString(expanded_s));
                 }
                 Redirect::HereDoc(body, strip, expand) => {
-                    expanded.redirects.push(Redirect::HereDoc(body.clone(), *strip, *expand));
+                    expanded
+                        .redirects
+                        .push(Redirect::HereDoc(body.clone(), *strip, *expand));
                 }
             }
         }
@@ -538,13 +597,19 @@ impl Executor {
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
-                "-p" => { prompt = args.get(i + 1).cloned(); i += 2; }
-                "-s" => { silent = true; i += 1; }
-                "-t" => { 
+                "-p" => {
+                    prompt = args.get(i + 1).cloned();
+                    i += 2;
+                }
+                "-s" => {
+                    silent = true;
+                    i += 1;
+                }
+                "-t" => {
                     if let Some(t) = args.get(i + 1).and_then(|s| s.parse::<f64>().ok()) {
                         timeout = Some(t);
                     }
-                    i += 2; 
+                    i += 2;
                 }
                 "-d" => {
                     if let Some(d) = args.get(i + 1) {
@@ -556,7 +621,10 @@ impl Executor {
                     array_name = args.get(i + 1).cloned();
                     i += 2;
                 }
-                "--" => { i += 1; break; }
+                "--" => {
+                    i += 1;
+                    break;
+                }
                 _ => break,
             }
         }
@@ -587,33 +655,41 @@ impl Executor {
         let mut buffer = Vec::new();
         let stdin_fd = unsafe { BorrowedFd::borrow_raw(0) };
         let start_time = std::time::Instant::now();
-        
+
         loop {
             let mut remaining_ms = None;
             if let Some(t) = timeout {
                 let elapsed = start_time.elapsed().as_secs_f64();
                 let rem = t - elapsed;
                 if rem <= 0.0 {
-                    if silent { println!(); }
-                    return Ok(ExecOutcome::Status(142)); 
+                    if silent {
+                        println!();
+                    }
+                    return Ok(ExecOutcome::Status(142));
                 }
                 remaining_ms = Some((rem * 1000.0) as i16);
             }
 
             let mut fds = [PollFd::new(&stdin_fd, PollFlags::POLLIN)];
-            let poll_timeout = remaining_ms.map(PollTimeout::from).unwrap_or(PollTimeout::NONE);
-            
+            let poll_timeout = remaining_ms
+                .map(PollTimeout::from)
+                .unwrap_or(PollTimeout::NONE);
+
             match poll(&mut fds, poll_timeout) {
                 Ok(0) => {
-                    if silent { println!(); }
-                    return Ok(ExecOutcome::Status(142)); 
+                    if silent {
+                        println!();
+                    }
+                    return Ok(ExecOutcome::Status(142));
                 }
                 Ok(_) => {
                     let mut byte = [0; 1];
                     match nix_read(stdin_fd, &mut byte) {
-                        Ok(0) => break, 
+                        Ok(0) => break,
                         Ok(_) => {
-                            if byte[0] == delim { break; }
+                            if byte[0] == delim {
+                                break;
+                            }
                             buffer.push(byte[0]);
                         }
                         Err(_) => break,
@@ -624,18 +700,24 @@ impl Executor {
         }
 
         if let Some(t) = old_termios {
-            unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, &t); }
-            println!(); 
+            unsafe {
+                libc::tcsetattr(0, libc::TCSAFLUSH, &t);
+            }
+            println!();
         }
 
-        let input = String::from_utf8_lossy(&buffer).trim_end_matches('\r').to_string();
+        let input = String::from_utf8_lossy(&buffer)
+            .trim_end_matches('\r')
+            .to_string();
 
         if let Some(arr) = array_name {
             let words: Vec<String> = input.split_whitespace().map(String::from).collect();
             self.arrays.insert(arr, words);
         } else {
-            if vars.is_empty() { vars.push("REPLY".to_string()); }
-            
+            if vars.is_empty() {
+                vars.push("REPLY".to_string());
+            }
+
             if vars.len() == 1 {
                 crate::util::set_var(&vars[0], &input);
             } else {

@@ -1,9 +1,9 @@
+use crate::config::options::ShellOptions;
+use crate::error::{Result, ShellError};
+use crate::lexer::token::Token;
+use glob::glob;
 use std::collections::HashMap;
 use std::env;
-use glob::glob;
-use crate::lexer::token::Token;
-use crate::error::{Result, ShellError};
-use crate::config::options::ShellOptions;
 
 pub struct Expander {
     last_exit_code: i32,
@@ -35,14 +35,14 @@ impl Expander {
             match token {
                 Token::SingleQuoted(s) => {
                     // Single quotes prevent ALL expansion
-                    final_args.push(s); 
+                    final_args.push(s);
                 }
                 Token::DoubleQuoted(s) => {
                     // Double quotes allow variables/arrays, but prevent globbing
                     if s.contains("${") {
                         let expanded = self.expand_braced(&s)?;
                         // In double quotes, arrays usually join into a single string or first element
-                        final_args.extend(expanded); 
+                        final_args.extend(expanded);
                     } else {
                         let expanded = self.expand_vars(&s)?;
                         final_args.push(expanded);
@@ -56,20 +56,23 @@ impl Expander {
                     } else {
                         let mut expanded = self.expand_vars(&s)?;
                         expanded = self.expand_tilde(&expanded);
-                        
+
                         // Globbing
-                        if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
+                        if expanded.contains('*')
+                            || expanded.contains('?')
+                            || expanded.contains('[')
+                        {
                             if let Ok(paths) = glob(&expanded) {
                                 let matches: Vec<_> = paths.filter_map(|p| p.ok()).collect();
                                 if matches.is_empty() {
                                     final_args.push(expanded);
                                 } else {
-                                    for p in matches { 
-                                        final_args.push(p.to_string_lossy().into_owned()); 
+                                    for p in matches {
+                                        final_args.push(p.to_string_lossy().into_owned());
                                     }
                                 }
-                            } else { 
-                                final_args.push(expanded); 
+                            } else {
+                                final_args.push(expanded);
                             }
                         } else {
                             final_args.push(expanded);
@@ -89,7 +92,7 @@ impl Expander {
         while let Some(c) = chars.next() {
             if c == '$' {
                 let mut var_name = String::new();
-                
+
                 // Collect the variable name
                 while let Some(&next) = chars.peek() {
                     if next.is_alphanumeric() || next == '_' {
@@ -118,13 +121,16 @@ impl Expander {
                 } else if let Ok(value) = env::var(&var_name) {
                     result.push_str(&value);
                 } else if self.options.nounset {
-                    return Err(ShellError::Execution(format!("{}: unbound variable", var_name)));
+                    return Err(ShellError::Execution(format!(
+                        "{}: unbound variable",
+                        var_name
+                    )));
                 }
             } else {
                 result.push(c);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -147,20 +153,22 @@ impl Expander {
                 let inner = &input[start + 2..end];
                 let prefix = &input[..start];
                 let suffix = &input[end + 1..];
-                
+
                 // 1. ${arr[@]} - Expands to multiple words
                 if inner.ends_with("[@]") {
                     let name = &inner[..inner.len() - 3];
                     if let Some(arr) = self.arrays.get(name) {
                         if prefix.is_empty() && suffix.is_empty() {
-                            return Ok(arr.clone()); 
+                            return Ok(arr.clone());
                         }
-                        // If surrounded by text, Bash concatenates to first/last. 
+                        // If surrounded by text, Bash concatenates to first/last.
                         // We'll just return the array elements with prefix/suffix attached.
-                        return Ok(arr.iter().map(|v| format!("{}{}{}", prefix, v, suffix)).collect());
+                        return Ok(arr
+                            .iter()
+                            .map(|v| format!("{}{}{}", prefix, v, suffix))
+                            .collect());
                     }
-                } 
-                
+                }
                 // 2. ${arr[*]} - Expands to single word joined by spaces
                 else if inner.ends_with("[*]") {
                     let name = &inner[..inner.len() - 3];
@@ -168,8 +176,7 @@ impl Expander {
                         let joined = arr.join(" ");
                         return Ok(vec![format!("{}{}{}", prefix, joined, suffix)]);
                     }
-                } 
-                
+                }
                 // 3. ${#arr[@]} - Array length
                 else if inner.starts_with('#') && inner.ends_with("[@]") {
                     let name = &inner[1..inner.len() - 3];
@@ -177,13 +184,12 @@ impl Expander {
                         return Ok(vec![format!("{}{}{}", prefix, arr.len(), suffix)]);
                     }
                 }
-                
                 // 4. ${arr[index]} - Scalar array access (FIXED)
                 else if inner.contains('[') && inner.ends_with(']') {
                     let bracket_pos = inner.find('[').unwrap();
                     let name = &inner[..bracket_pos];
                     let index_str = &inner[bracket_pos + 1..inner.len() - 1];
-                    
+
                     if let Some(arr) = self.arrays.get(name) {
                         if let Ok(idx) = index_str.parse::<usize>() {
                             let val = arr.get(idx).cloned().unwrap_or_default();
@@ -193,7 +199,7 @@ impl Expander {
                 }
             }
         }
-        
+
         // Fallback: Not an array expansion, treat as normal string
         Ok(vec![input.to_string()])
     }

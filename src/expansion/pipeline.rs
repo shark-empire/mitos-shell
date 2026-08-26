@@ -1,5 +1,5 @@
 // src/expansion/pipeline.rs
-use super::{expander::Expander, command, arithmetic};
+use super::{arithmetic, command, expander::Expander};
 use crate::builtins::alias;
 
 pub struct ExpansionPipeline {
@@ -8,7 +8,9 @@ pub struct ExpansionPipeline {
 
 impl ExpansionPipeline {
     pub fn new(last_status: i32) -> Self {
-        Self { expander: Expander::new(last_status) }
+        Self {
+            expander: Expander::new(last_status),
+        }
     }
 
     /// Full POSIX expansion order:

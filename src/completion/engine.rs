@@ -1,7 +1,7 @@
 // src/completion/engine.rs
 use rustyline::completion::{Completer, Pair};
-use rustyline::Context;
 use rustyline::error::ReadlineError;
+use rustyline::Context;
 use std::fs;
 use std::path::Path;
 
@@ -77,7 +77,11 @@ fn complete_commands(prefix: &str) -> Vec<Pair> {
 fn complete_files(prefix: &str) -> Vec<Pair> {
     let mut candidates = Vec::new();
     let (dir, partial) = split_path(prefix);
-    let search_dir = if dir.is_empty() { Path::new(".") } else { Path::new(&dir) };
+    let search_dir = if dir.is_empty() {
+        Path::new(".")
+    } else {
+        Path::new(&dir)
+    };
 
     if let Ok(entries) = fs::read_dir(search_dir) {
         for entry in entries.flatten() {
@@ -94,7 +98,10 @@ fn complete_files(prefix: &str) -> Vec<Pair> {
                     replacement.push('/');
                 }
 
-                candidates.push(Pair { display: name, replacement });
+                candidates.push(Pair {
+                    display: name,
+                    replacement,
+                });
             }
         }
     }

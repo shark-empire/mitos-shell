@@ -13,7 +13,10 @@ lazy_static! {
 // }
 
 pub fn set(name: &str, value: &str) {
-    ALIASES.lock().unwrap().insert(name.to_string(), value.to_string());
+    ALIASES
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), value.to_string());
 }
 
 pub fn get(name: &str) -> Option<String> {
@@ -34,10 +37,7 @@ pub fn list() {
 /// Expands aliases in a command line. Prevents infinite recursion by
 /// tracking already-expanded aliases in the current pass.
 pub fn expand(line: &str) -> String {
-    let mut tokens: Vec<String> = line
-        .split_whitespace()
-        .map(|s| s.to_string())
-        .collect();
+    let mut tokens: Vec<String> = line.split_whitespace().map(|s| s.to_string()).collect();
 
     if tokens.is_empty() {
         return line.to_string();

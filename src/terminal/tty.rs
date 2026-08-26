@@ -1,5 +1,5 @@
-use nix::unistd::Pid;
 use nix::libc;
+use nix::unistd::Pid;
 use std::os::unix::io::RawFd;
 
 pub struct TtyManager {
@@ -12,22 +12,26 @@ impl TtyManager {
     pub fn init() -> Option<Self> {
         // Open the controlling terminal
         let tty_fd = nix::fcntl::open(
-            "/dev/tty", 
-            nix::fcntl::OFlag::O_RDWR, 
-            nix::sys::stat::Mode::empty()
-        ).ok()?;
-        
+            "/dev/tty",
+            nix::fcntl::OFlag::O_RDWR,
+            nix::sys::stat::Mode::empty(),
+        )
+        .ok()?;
+
         let pid = nix::unistd::getpid();
-        
+
         // Put the shell in its own process group
         let _ = nix::unistd::setpgid(pid, pid);
-        
+
         // Take control of the terminal
-        unsafe { 
-            let _ = libc::tcsetpgrp(tty_fd, pid.as_raw()); 
+        unsafe {
+            let _ = libc::tcsetpgrp(tty_fd, pid.as_raw());
         }
-        
-        Some(Self { tty_fd, shell_pgid: pid })
+
+        Some(Self {
+            tty_fd,
+            shell_pgid: pid,
+        })
     }
 
     /// Hands terminal control to a child process group

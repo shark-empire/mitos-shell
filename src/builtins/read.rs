@@ -158,20 +158,12 @@ fn read_line_silent(line: &mut String) -> io::Result<usize> {
         // Disable echo.
         new_termios.c_lflag &= !libc::ECHO;
 
-        libc::tcsetattr(
-            libc::STDIN_FILENO,
-            libc::TCSAFLUSH,
-            &new_termios,
-        );
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &new_termios);
 
         let result = io::stdin().read_line(line);
 
         // Restore original terminal attributes.
-        libc::tcsetattr(
-            libc::STDIN_FILENO,
-            libc::TCSAFLUSH,
-            &old_termios,
-        );
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old_termios);
 
         result
     }

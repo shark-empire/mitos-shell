@@ -1,4 +1,3 @@
-
 use crate::builtins::alias;
 use crate::completion::helper::MitosHelper;
 use crate::config::startup;
@@ -22,11 +21,8 @@ impl Session {
             load_startup_files(&mut executor);
         }
 
-        let mut rl = Editor::with_config(
-            rustyline::Config::builder()
-                .auto_add_history(true)
-                .build(),
-        )?;
+        let mut rl =
+            Editor::with_config(rustyline::Config::builder().auto_add_history(true).build())?;
 
         rl.set_helper(Some(MitosHelper));
 
@@ -82,13 +78,11 @@ impl Session {
         let tokens: Vec<_> = Lexer::new(&expanded).collect();
 
         match Parser::new(tokens).parse() {
-            Ok(ast) => {
-                match self.executor.execute(ast) {
-                    Ok(Some(exit_code)) => return Some(exit_code),
-                    Ok(None) => {}
-                    Err(error) => eprintln!("mitos: {}", error),
-                }
-            }
+            Ok(ast) => match self.executor.execute(ast) {
+                Ok(Some(exit_code)) => return Some(exit_code),
+                Ok(None) => {}
+                Err(error) => eprintln!("mitos: {}", error),
+            },
 
             Err(error) => {
                 eprintln!("mitos: syntax error: {}", error);
@@ -137,5 +131,3 @@ fn build_prompt() -> String {
         cwd
     )
 }
-
-

@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Evaluates `test` or `[` conditions.
 /// Returns 0 for true, 1 for false, 2 for syntax errors.
@@ -10,12 +10,14 @@ pub fn execute_test(args: &[String]) -> i32 {
             eprintln!("[: missing ']'");
             return 2;
         }
-        &args[1..args.len()-1] // Strip [ and ]
+        &args[1..args.len() - 1] // Strip [ and ]
     } else {
         &args[1..] // Strip 'test'
     };
 
-    if args.is_empty() { return 1; } // Empty condition is false
+    if args.is_empty() {
+        return 1;
+    } // Empty condition is false
 
     // Handle unary operators (e.g., -f file, -z string)
     if args.len() == 2 {
@@ -28,7 +30,10 @@ pub fn execute_test(args: &[String]) -> i32 {
             "-x" => bool_to_status(Path::new(&args[1]).exists()), // Simplified exec check
             "-z" => bool_to_status(args[1].is_empty()),
             "-n" => bool_to_status(!args[1].is_empty()),
-            _ => { eprintln!("test: unknown unary operator {}", args[0]); 2 }
+            _ => {
+                eprintln!("test: unknown unary operator {}", args[0]);
+                2
+            }
         };
     }
 
@@ -51,7 +56,10 @@ pub fn execute_test(args: &[String]) -> i32 {
                     _ => 2,
                 }
             }
-            _ => { eprintln!("test: unknown binary operator {}", op); 2 }
+            _ => {
+                eprintln!("test: unknown binary operator {}", op);
+                2
+            }
         };
     }
 
@@ -64,4 +72,10 @@ pub fn execute_test(args: &[String]) -> i32 {
     2
 }
 
-fn bool_to_status(b: bool) -> i32 { if b { 0 } else { 1 } }
+fn bool_to_status(b: bool) -> i32 {
+    if b {
+        0
+    } else {
+        1
+    }
+}
