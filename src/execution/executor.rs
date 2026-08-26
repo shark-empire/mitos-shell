@@ -39,7 +39,7 @@ impl Executor {
             context_stack: vec![Vec::new()],
             options: crate::config::options::ShellOptions::default(),
             traps: HashMap::new(),
-            arrays: HashMap::new(), // Fixed: Initialize arrays
+            arrays: HashMap::new(),
         }
     }
 
@@ -191,7 +191,6 @@ impl Executor {
         if pipeline.commands.len() == 1 {
             let first = self.expand_command(&pipeline.commands[0])?;
 
-            // Bare assignments (Fixed: Handles both Scalar and Array)
             if first.args.is_empty() {
                 for assignment in &first.assignments {
                     match assignment {
@@ -210,6 +209,11 @@ impl Executor {
                     return Ok(ExecOutcome::Status(2));
                 }
                 return self.source_file(&first.args[1], &first.args[2..]);
+            }
+
+            // Intercept `read` so it can mutate shell state (like arrays)
+            if first.args[0] == "read" {
+                return self.execute_read(&first.args);
             }
 
             if let Some(outcome) = builtins::try_execute(&first.args) {
@@ -278,7 +282,7 @@ impl Executor {
             self.last_status, 
             self.current_args().to_vec(), 
             self.options.clone(),
-            self.arrays.clone(), // Fixed: Pass arrays
+            self.arrays.clone(),
         );
 
         let mut words = Vec::new();
@@ -305,7 +309,7 @@ impl Executor {
             self.last_status, 
             self.current_args().to_vec(), 
             self.options.clone(),
-            self.arrays.clone(), // Fixed: Pass arrays
+            self.arrays.clone(),
         );
         
         let tokens: Vec<Token> = Lexer::new(&c.word).collect();
@@ -400,7 +404,6 @@ impl Executor {
                                     Mode::from_bits(0o644).unwrap())?;
                                 dup2(fd, 1)?; let _ = close(fd);
                             }
-                            // Fixed: Handle HereString and HereDoc
                             Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
                                 let path = format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
                                 let _ = fs::write(&path, s);
@@ -411,7 +414,6 @@ impl Executor {
                         }
                     }
 
-                    // Fixed: Handle Assignment enum instead of tuples
                     for assignment in &cmd.assignments {
                         if let Assignment::Scalar(k, v) = assignment {
                             set_var(k, v);
@@ -463,7 +465,7 @@ impl Executor {
             self.last_status,
             self.current_args().to_vec(),
             self.options.clone(),
-            self.arrays.clone(), // Fixed: Pass arrays
+            self.arrays.clone(),
         );
 
         let mut expanded = command.clone();
@@ -476,7 +478,6 @@ impl Executor {
             expanded.args.extend(expander.expand_tokens(tokens)?);
         }
 
-        // Fixed: Handle Assignment enum
         for assignment in &command.assignments {
             match assignment {
                 Assignment::Scalar(key, value) => {
@@ -495,7 +496,6 @@ impl Executor {
             }
         }
 
-        // Fixed: Handle all Redirect variants
         for redirect in &command.redirects {
             match redirect {
                 Redirect::Input(path) => {
@@ -527,7 +527,7 @@ impl Executor {
         Ok(expanded)
     }
 
-        fn execute_read(&mut self, args: &[String]) -> Result<ExecOutcome> {
+    fn execute_read(&mut self, args: &[String]) -> Result<ExecOutcome> {
         let mut prompt = None;
         let mut silent = false;
         let mut timeout = None;
@@ -571,7 +571,6 @@ impl Executor {
             let _ = io::stderr().flush();
         }
 
-        // Disable echo if silent mode is active
         let mut old_termios: Option<libc::termios> = None;
         if silent {
             unsafe {
@@ -596,7 +595,7 @@ impl Executor {
                 let rem = t - elapsed;
                 if rem <= 0.0 {
                     if silent { println!(); }
-                    return Ok(ExecOutcome::Status(142)); // Timeout exit code
+                    return Ok(ExecOutcome::Status(142)); 
                 }
                 remaining_ms = Some((rem * 1000.0) as i16);
             }
@@ -607,13 +606,12 @@ impl Executor {
             match poll(&mut fds, poll_timeout) {
                 Ok(0) => {
                     if silent { println!(); }
-                    return Ok(ExecOutcome::Status(142)); // Timeout
+                    return Ok(ExecOutcome::Status(142)); 
                 }
                 Ok(_) => {
                     let mut byte = [0; 1];
-                    // Read directly from raw FD 0 to bypass Rust's buffered Stdin
                     match nix_read(stdin_fd, &mut byte) {
-                        Ok(0) => break, // EOF
+                        Ok(0) => break, 
                         Ok(_) => {
                             if byte[0] == delim { break; }
                             buffer.push(byte[0]);
@@ -625,15 +623,13 @@ impl Executor {
             }
         }
 
-        // Restore terminal state
         if let Some(t) = old_termios {
             unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, &t); }
-            println!(); // Print newline after hidden input
+            println!(); 
         }
 
         let input = String::from_utf8_lossy(&buffer).trim_end_matches('\r').to_string();
 
-        // Assign to Array or Scalar Variables
         if let Some(arr) = array_name {
             let words: Vec<String> = input.split_whitespace().map(String::from).collect();
             self.arrays.insert(arr, words);
@@ -657,5 +653,3 @@ impl Executor {
         Ok(ExecOutcome::Status(0))
     }
 }
-
-
