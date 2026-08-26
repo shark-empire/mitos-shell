@@ -12,7 +12,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // If we are already root, just execute the command immediately
     if Uid::effective().is_root() {
         exec_command(&args[1..]);
     }
@@ -29,12 +28,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Escalate privileges to root (UID 0, GID 0)
     nix::unistd::setgid(Gid::from_raw(0)).expect("lala: failed to set GID (is it setuid root?)");
     nix::unistd::setuid(Uid::from_raw(0)).expect("lala: failed to set UID (is it setuid root?)");
 
     exec_command(&args[1..]);
-
+}
 
 fn exec_command(args: &[String]) -> ! {
     let prog = CString::new(args[0].as_str()).unwrap();
@@ -72,7 +70,6 @@ fn read_password_silently() -> String {
 }
 
 fn verify_password(username: &str, password: &str) -> bool {
-    // Reading /etc/shadow requires the binary to be executed as root (via setuid)
     let shadow_content = match fs::read_to_string("/etc/shadow") {
         Ok(c) => c,
         Err(_) => {
