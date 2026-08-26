@@ -41,3 +41,8 @@ assets = [
 ]
 maintainer-scripts = "debian/scripts"
 
+[[bin]]
+name = "lala"
+path = "src/bin/lala.rs"
+
+
