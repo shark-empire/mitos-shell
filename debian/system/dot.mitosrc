@@ -1,0 +1,9 @@
+# ~/.mitosrc - User configuration for MITOS Shell
+alias update='lala apt update'
+alias upgrade='lala apt upgrade'
+alias cls='clear'
+
+mkcd() {
+    mkdir -p "$1" && cd "$1"
+}
+echo "Welcome to MITOS, $(whoami)!"
