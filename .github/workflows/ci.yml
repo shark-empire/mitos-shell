@@ -1,4 +1,4 @@
-name: CI
+name: mitos-shell build
 
 on:
   push:
