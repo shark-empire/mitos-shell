@@ -21,3 +21,23 @@ dirs = "5.0"
 glob = "0.3"
 
 ctrlc = "3.4"
+
+[package.metadata.deb]
+maintainer = "MITOS OS Team <admin@mitos.local>"
+copyright = "2026, MITOS Project"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+MITOS Shell is a modern, POSIX-compliant command-line interpreter \
+built in Rust for the MITOS operating system."""
+depends = "$auto, libc6"
+section = "shells"
+priority = "optional"
+assets = [
+    ["target/release/mitos-shell", "usr/bin/mitos", "755"],
+    ["debian/system/mitosrc", "etc/mitosrc", "644"],
+    ["debian/system/dot.mitosrc", "etc/skel/.mitosrc", "644"],
+    ["debian/system/mitos.sh", "etc/profile.d/mitos.sh", "644"],
+    ["README.md", "usr/share/doc/mitos/README", "644"],
+]
+maintainer-scripts = "debian/scripts"
+
