@@ -43,7 +43,7 @@ impl Completer for MitosHelper {
 impl Validator for MitosHelper {
     fn validate(&self, ctx: &mut ValidationContext) -> rustyline::Result<ValidationResult> {
         Ok(if is_complete(ctx.input()) {
-            ValidationResult::Valid
+            ValidationResult::Valid(None)
         } else {
             ValidationResult::Incomplete
         })
