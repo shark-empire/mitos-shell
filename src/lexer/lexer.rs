@@ -43,6 +43,28 @@ impl Iterator for Lexer {
                 if self.peek() == Some('>') { self.advance(); Some(Token::AppendOut) }
                 else { Some(Token::RedirectOut) }
             }
+  
+       '\'' => {
+          let mut word = String::new();
+          while let Some(c) = self.advance() {
+            if c == '\'' { break; }
+             word.push(c);
+         }
+           Some(Token::SingleQuoted(word))
+         }
+     '"' => {
+         let mut word = String::new();
+        while let Some(c) = self.advance() {
+        if c == '"' { break; }
+        if c == '\\' {
+            if let Some(escaped) = self.advance() { word.push(escaped); }
+        } else {
+            word.push(c);
+        }
+         }
+           Some(Token::DoubleQuoted(word))
+         }
+
             '(' => Some(Token::LeftParen),
             ')' => Some(Token::RightParen),
             '{' => Some(Token::LeftBrace),
