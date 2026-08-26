@@ -16,7 +16,7 @@ use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, IntoRawFd};
 
 pub struct Executor {
     pub tty: Option<TtyManager>,
@@ -43,7 +43,7 @@ impl Executor {
         }
     }
 
-    fn push_context(&mut self, args: Vec<String>) {
+    pub fn push_context(&mut self, args: Vec<String>) {
         self.context_stack.push(args);
     }
 
@@ -119,8 +119,8 @@ impl Executor {
     }
 
     fn exec_node(&mut self, node: &Node) -> Result<ExecOutcome> {
-        if crate::main::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::main::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
 
             if let Some(cmd) = self.traps.get("INT").cloned() {
                 let tokens: Vec<_> = Lexer::new(&cmd).collect();
@@ -224,7 +224,7 @@ impl Executor {
                 return self.execute_read(&first.args);
             }
 
-            if let Some(outcome) = builtins::try_execute(&first.args) {
+            if let Some(outcome) = builtins::try_execute(self, &first.args) {
                 return Ok(outcome);
             }
 
@@ -385,7 +385,10 @@ impl Executor {
         let n = commands.len();
         let mut pipes: Vec<(i32, i32)> = Vec::new();
         for _ in 0..n.saturating_sub(1) {
-            pipes.push(pipe()?);
+            // nix 0.29's pipe() returns owned fds; convert to raw fds since the
+            // rest of this function manages fd lifetimes manually via close().
+            let (r, w) = pipe()?;
+            pipes.push((r.into_raw_fd(), w.into_raw_fd()));
         }
 
         let mut children = Vec::new();
@@ -667,10 +670,10 @@ impl Executor {
                     }
                     return Ok(ExecOutcome::Status(142));
                 }
-                remaining_ms = Some((rem * 1000.0) as i16);
+                remaining_ms = Some((rem * 1000.0) as u16);
             }
 
-            let mut fds = [PollFd::new(&stdin_fd, PollFlags::POLLIN)];
+            let mut fds = [PollFd::new(stdin_fd, PollFlags::POLLIN)];
             let poll_timeout = remaining_ms
                 .map(PollTimeout::from)
                 .unwrap_or(PollTimeout::NONE);
@@ -684,7 +687,7 @@ impl Executor {
                 }
                 Ok(_) => {
                     let mut byte = [0; 1];
-                    match nix_read(stdin_fd, &mut byte) {
+                    match nix_read(0, &mut byte) {
                         Ok(0) => break,
                         Ok(_) => {
                             if byte[0] == delim {
