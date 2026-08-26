@@ -2,6 +2,7 @@ pub mod alias;
 pub mod read;
 pub mod test;
 pub mod set;
+pub mod eval;
 
 use nix::sys::signal::{killpg, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
