@@ -13,6 +13,10 @@ use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{fork, ForkResult, Pid};
 use std::collections::HashMap;
 use std::fs;
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::unistd::read as nix_read;
+use std::os::fd::BorrowedFd;
+use std::io::{self, Write};
 
 pub struct Executor {
     pub tty: Option<TtyManager>,
@@ -522,4 +526,136 @@ impl Executor {
 
         Ok(expanded)
     }
+
+        fn execute_read(&mut self, args: &[String]) -> Result<ExecOutcome> {
+        let mut prompt = None;
+        let mut silent = false;
+        let mut timeout = None;
+        let mut delim = b'\n';
+        let mut array_name = None;
+        let mut vars = Vec::new();
+
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "-p" => { prompt = args.get(i + 1).cloned(); i += 2; }
+                "-s" => { silent = true; i += 1; }
+                "-t" => { 
+                    if let Some(t) = args.get(i + 1).and_then(|s| s.parse::<f64>().ok()) {
+                        timeout = Some(t);
+                    }
+                    i += 2; 
+                }
+                "-d" => {
+                    if let Some(d) = args.get(i + 1) {
+                        delim = d.bytes().next().unwrap_or(b'\n');
+                    }
+                    i += 2;
+                }
+                "-a" => {
+                    array_name = args.get(i + 1).cloned();
+                    i += 2;
+                }
+                "--" => { i += 1; break; }
+                _ => break,
+            }
+        }
+
+        while i < args.len() {
+            vars.push(args[i].clone());
+            i += 1;
+        }
+
+        if let Some(p) = prompt {
+            eprint!("{}", p);
+            let _ = io::stderr().flush();
+        }
+
+        // Disable echo if silent mode is active
+        let mut old_termios: Option<libc::termios> = None;
+        if silent {
+            unsafe {
+                let mut t: libc::termios = std::mem::zeroed();
+                if libc::tcgetattr(0, &mut t) == 0 {
+                    old_termios = Some(t);
+                    let mut new_t = t;
+                    new_t.c_lflag &= !libc::ECHO;
+                    libc::tcsetattr(0, libc::TCSAFLUSH, &new_t);
+                }
+            }
+        }
+
+        let mut buffer = Vec::new();
+        let stdin_fd = unsafe { BorrowedFd::borrow_raw(0) };
+        let start_time = std::time::Instant::now();
+        
+        loop {
+            let mut remaining_ms = None;
+            if let Some(t) = timeout {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                let rem = t - elapsed;
+                if rem <= 0.0 {
+                    if silent { println!(); }
+                    return Ok(ExecOutcome::Status(142)); // Timeout exit code
+                }
+                remaining_ms = Some((rem * 1000.0) as i16);
+            }
+
+            let mut fds = [PollFd::new(&stdin_fd, PollFlags::POLLIN)];
+            let poll_timeout = remaining_ms.map(PollTimeout::from).unwrap_or(PollTimeout::NONE);
+            
+            match poll(&mut fds, poll_timeout) {
+                Ok(0) => {
+                    if silent { println!(); }
+                    return Ok(ExecOutcome::Status(142)); // Timeout
+                }
+                Ok(_) => {
+                    let mut byte = [0; 1];
+                    // Read directly from raw FD 0 to bypass Rust's buffered Stdin
+                    match nix_read(stdin_fd, &mut byte) {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            if byte[0] == delim { break; }
+                            buffer.push(byte[0]);
+                        }
+                        Err(_) => break,
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        // Restore terminal state
+        if let Some(t) = old_termios {
+            unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, &t); }
+            println!(); // Print newline after hidden input
+        }
+
+        let input = String::from_utf8_lossy(&buffer).trim_end_matches('\r').to_string();
+
+        // Assign to Array or Scalar Variables
+        if let Some(arr) = array_name {
+            let words: Vec<String> = input.split_whitespace().map(String::from).collect();
+            self.arrays.insert(arr, words);
+        } else {
+            if vars.is_empty() { vars.push("REPLY".to_string()); }
+            
+            if vars.len() == 1 {
+                crate::util::set_var(&vars[0], &input);
+            } else {
+                let words: Vec<&str> = input.split_whitespace().collect();
+                for (idx, var) in vars.iter().enumerate() {
+                    if idx == vars.len() - 1 {
+                        crate::util::set_var(var, words[idx..].join(" "));
+                    } else {
+                        crate::util::set_var(var, words.get(idx).unwrap_or(&""));
+                    }
+                }
+            }
+        }
+
+        Ok(ExecOutcome::Status(0))
+    }
 }
+
+
