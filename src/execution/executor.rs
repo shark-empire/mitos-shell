@@ -35,6 +35,7 @@ impl Executor {
             context_stack: vec![Vec::new()],
             options: crate::config::options::ShellOptions::default(),
             traps: HashMap::new(),
+            arrays: HashMap::new(), // Fixed: Initialize arrays
         }
     }
 
@@ -116,7 +117,6 @@ impl Executor {
     }
 
     fn exec_node(&mut self, node: &Node) -> Result<ExecOutcome> {
-        // Check for interrupts (Ctrl+C) and traps
         if crate::main::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
             crate::main::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
             
@@ -162,13 +162,11 @@ impl Executor {
     }
 
     fn exec_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecOutcome> {
-        // 1. Handle `set` builtin
         if pipeline.commands.len() == 1 && pipeline.commands[0].args.first().map(|s| s.as_str()) == Some("set") {
             let status = builtins::set::execute(&pipeline.commands[0].args, &mut self.options);
             return Ok(ExecOutcome::Status(status));
         }
 
-        // 2. Handle `eval`
         if pipeline.commands.len() == 1 && pipeline.commands[0].args.first().map(|s| s.as_str()) == Some("eval") {
             if let Some(code) = builtins::eval::execute(&pipeline.commands[0].args) {
                 return Ok(ExecOutcome::Eval(code));
@@ -176,7 +174,6 @@ impl Executor {
             return Ok(ExecOutcome::Status(0));
         }
 
-        // 3. Set -x (Xtrace)
         if self.options.xtrace {
             let cmd_str = pipeline.commands.iter()
                 .map(|c| c.args.join(" "))
@@ -184,35 +181,25 @@ impl Executor {
                 .join(" | ");
             eprintln!("+ {}", cmd_str);
         }
- for assignment in &first.assignments {
-    match assignment {
-        Assignment::Scalar(k, v) => set_var(k, v),
-        Assignment::Array(name, elements) => {
-            let expander = Expander::new(self.last_status, self.current_args().to_vec(), self.options.clone(), self.arrays.clone());
-            let expanded: Vec<String> = elements.iter().flat_map(|e| {
-                let tokens: Vec<Token> = Lexer::new(e).collect();
-                expander.expand_tokens(tokens).unwrap_or_default()
-            }).collect();
-            self.arrays.insert(name.clone(), expanded);
-        }
-    }
-}
-
 
         let mut expanded_commands = Vec::new();
 
         if pipeline.commands.len() == 1 {
             let first = self.expand_command(&pipeline.commands[0])?;
 
-            // Bare assignments
+            // Bare assignments (Fixed: Handles both Scalar and Array)
             if first.args.is_empty() {
-                for (key, value) in &first.assignments {
-                    set_var(key, value);
+                for assignment in &first.assignments {
+                    match assignment {
+                        Assignment::Scalar(k, v) => set_var(k, v),
+                        Assignment::Array(name, elements) => {
+                            self.arrays.insert(name.clone(), elements.clone());
+                        }
+                    }
                 }
                 return Ok(ExecOutcome::Status(0));
             }
 
-            // source / .
             if first.args[0] == "source" || first.args[0] == "." {
                 if first.args.len() < 2 {
                     eprintln!("mitos: {}: expected a file", first.args[0]);
@@ -221,12 +208,10 @@ impl Executor {
                 return self.source_file(&first.args[1], &first.args[2..]);
             }
 
-            // Builtins
             if let Some(outcome) = builtins::try_execute(&first.args) {
                 return Ok(outcome);
             }
 
-            // Functions
             if let Some(function) = self.functions.get(&first.args[0]).cloned() {
                 return self.exec_function(&function, &first.args[1..]);
             }
@@ -238,10 +223,8 @@ impl Executor {
             }
         }
 
-        // External pipeline
         let status = self.fork_pipeline(&expanded_commands)?;
 
-        // 4. Set -e (Errexit)
         if status != 0 && self.options.errexit {
             return Ok(ExecOutcome::Exit(status));
         }
@@ -290,7 +273,8 @@ impl Executor {
         let expander = Expander::new(
             self.last_status, 
             self.current_args().to_vec(), 
-            self.options.clone()
+            self.options.clone(),
+            self.arrays.clone(), // Fixed: Pass arrays
         );
 
         let mut words = Vec::new();
@@ -316,7 +300,8 @@ impl Executor {
         let expander = Expander::new(
             self.last_status, 
             self.current_args().to_vec(), 
-            self.options.clone()
+            self.options.clone(),
+            self.arrays.clone(), // Fixed: Pass arrays
         );
         
         let tokens: Vec<Token> = Lexer::new(&c.word).collect();
@@ -411,21 +396,23 @@ impl Executor {
                                     Mode::from_bits(0o644).unwrap())?;
                                 dup2(fd, 1)?; let _ = close(fd);
                             }
-                            Redirect::HereString(s) => {
-    let expander = Expander::new(self.last_status, self.current_args().to_vec(), self.options.clone(), self.arrays.clone());
-    let expanded = expander.expand_vars(s).unwrap_or_default();
-    let path = format!("/tmp/mitos_heredoc_{}", std::process::id());
-    fs::write(&path, expanded).unwrap();
-    let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
-    dup2(fd, 0)?; let _ = close(fd);
-    let _ = fs::remove_file(path); // Clean up
-}
-// Similar logic for HereDoc...
-
+                            // Fixed: Handle HereString and HereDoc
+                            Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
+                                let path = format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
+                                let _ = fs::write(&path, s);
+                                let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
+                                dup2(fd, 0)?; let _ = close(fd);
+                                let _ = fs::remove_file(path);
+                            }
                         }
                     }
 
-                    for (k, v) in &cmd.assignments { set_var(k, v); }
+                    // Fixed: Handle Assignment enum instead of tuples
+                    for assignment in &cmd.assignments {
+                        if let Assignment::Scalar(k, v) = assignment {
+                            set_var(k, v);
+                        }
+                    }
 
                     let c_args: Vec<CString> = cmd.args.iter()
                         .map(|s| CString::new(s.as_str()).unwrap())
@@ -472,6 +459,7 @@ impl Executor {
             self.last_status,
             self.current_args().to_vec(),
             self.options.clone(),
+            self.arrays.clone(), // Fixed: Pass arrays
         );
 
         let mut expanded = command.clone();
@@ -484,12 +472,26 @@ impl Executor {
             expanded.args.extend(expander.expand_tokens(tokens)?);
         }
 
-        for (key, value) in &command.assignments {
-            let tokens: Vec<Token> = Lexer::new(value).collect();
-            let expanded_value = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
-            expanded.assignments.push((key.clone(), expanded_value));
+        // Fixed: Handle Assignment enum
+        for assignment in &command.assignments {
+            match assignment {
+                Assignment::Scalar(key, value) => {
+                    let tokens: Vec<Token> = Lexer::new(value).collect();
+                    let expanded_value = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    expanded.assignments.push(Assignment::Scalar(key.clone(), expanded_value));
+                }
+                Assignment::Array(name, elements) => {
+                    let mut expanded_elements = Vec::new();
+                    for e in elements {
+                        let tokens: Vec<Token> = Lexer::new(e).collect();
+                        expanded_elements.extend(expander.expand_tokens(tokens)?);
+                    }
+                    expanded.assignments.push(Assignment::Array(name.clone(), expanded_elements));
+                }
+            }
         }
 
+        // Fixed: Handle all Redirect variants
         for redirect in &command.redirects {
             match redirect {
                 Redirect::Input(path) => {
@@ -506,6 +508,14 @@ impl Executor {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
                     let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
                     expanded.redirects.push(Redirect::Append(p));
+                }
+                Redirect::HereString(s) => {
+                    let tokens: Vec<Token> = Lexer::new(s).collect();
+                    let expanded_s = expander.expand_tokens(tokens)?.join(" ");
+                    expanded.redirects.push(Redirect::HereString(expanded_s));
+                }
+                Redirect::HereDoc(body, strip, expand) => {
+                    expanded.redirects.push(Redirect::HereDoc(body.clone(), *strip, *expand));
                 }
             }
         }
