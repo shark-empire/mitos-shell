@@ -21,6 +21,10 @@ use nix::sys::signal::{signal, SigHandler, Signal};
 use std::fs;
 
 fn main() {
+    // Register signal handler
+    ctrlc::set_handler(move || {
+        INTERRUPTED.store(true, Ordering::SeqCst);
+    }).expect("Error setting Ctrl-C handler");
     // Ignore interactive signals if running a script
     unsafe {
         let _ = signal(Signal::SIGINT, SigHandler::SigIgn);
