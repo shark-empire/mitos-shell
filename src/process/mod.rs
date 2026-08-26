@@ -1,2 +1,2 @@
-mod job;
-mod job_control;
+pub mod job;
+pub mod job_control;
