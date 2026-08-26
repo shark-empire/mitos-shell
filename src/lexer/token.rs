@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Word(String),
-    SingleQuoted(String), // Prevents variable/glob expansion
-    DoubleQuoted(String), // Allows variable expansion, prevents globbing
+    SingleQuoted(String),
+    DoubleQuoted(String),
     Pipe,           // |
     And,            // &&
     Or,             // ||
-    Semicolon,_word(&self, word: &str) -> bool {      // ;
+    Semicolon,      // ;
     Background,     // &
     RedirectIn,     // <
     RedirectOut,    // >
@@ -16,9 +16,9 @@ pub enum Token {
     LeftBrace,      // {
     RightBrace,     // }
     Bang,           // !
-    HereDocStart(bool), // bool = strip_tabs (<<-)
-    HereString,         // <<<
-    ArrayAssign(String), // e.g., "arr=" (when followed by '(')
     Newline,
+    HereDocStart(bool),
+    HereString,     // <<<
+    ArrayAssign(String),
     Eof,
 }
