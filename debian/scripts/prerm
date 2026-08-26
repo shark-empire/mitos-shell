@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+    [ -f /etc/shells ] && sed -i '\|^/usr/bin/mitos$|d' /etc/shells
+    
+    # Rescue users whose default shell is mitos
+    awk -F: '$7 == "/usr/bin/mitos" {print $1}' /etc/passwd | while read user; do
+        usermod -s /bin/bash "$user" || true
+    done
+fi
