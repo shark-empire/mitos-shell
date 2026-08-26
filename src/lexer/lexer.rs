@@ -61,16 +61,6 @@ impl Iterator for Lexer {
                 }
             }
             ';' => Some(Token::Semicolon),
-            '<' => Some(Token::RedirectIn),
-            '>' => {
-                if self.peek() == Some('>') {
-                    self.advance();
-                    Some(Token::AppendOut)
-                } else {
-                    Some(Token::RedirectOut)
-                }
-            }
-            // Inside the match statement in Lexer::next():
             '<' => {
                 if self.peek() == Some('<') {
                     self.advance();
@@ -92,32 +82,13 @@ impl Iterator for Lexer {
                     Some(Token::RedirectIn)
                 }
             }
-
-            // Handle Array Assignments: If a word ends with '=', and the next char is '(', it's an array.
-            // We handle this by checking if the word ends with '=' and peeking ahead.
-            _ => {
-                let mut word = String::new();
-                word.push(ch);
-                while let Some(c) = self.peek() {
-                    if c.is_whitespace() || "|&;<>(){}!\n".contains(c) {
-                        break;
-                    }
-                    word.push(c);
+            '>' => {
+                if self.peek() == Some('>') {
                     self.advance();
+                    Some(Token::AppendOut)
+                } else {
+                    Some(Token::RedirectOut)
                 }
-
-                // Array detection: if word ends with '=' and next non-whitespace is '('
-                if word.ends_with('=') {
-                    let mut temp_pos = self.pos;
-                    while temp_pos < self.input.len() && self.input[temp_pos].is_whitespace() {
-                        temp_pos += 1;
-                    }
-                    if temp_pos < self.input.len() && self.input[temp_pos] == '(' {
-                        return Some(Token::ArrayAssign(word.trim_end_matches('=').to_string()));
-                    }
-                }
-
-                Some(Token::Word(word))
             }
 
             '\'' => {
@@ -152,34 +123,31 @@ impl Iterator for Lexer {
             '{' => Some(Token::LeftBrace),
             '}' => Some(Token::RightBrace),
             '!' => Some(Token::Bang),
-            '\'' | '"' => {
-                let quote = ch;
-                let mut word = String::new();
-                while let Some(c) = self.advance() {
-                    if c == quote {
-                        break;
-                    }
-                    if c == '\\' && quote == '"' {
-                        if let Some(escaped) = self.advance() {
-                            word.push(escaped);
-                        }
-                    } else {
-                        word.push(c);
-                    }
-                }
-                Some(Token::Word(word))
-            }
+
+            // Handle Array Assignments: If a word ends with '=', and the next char is '(', it's an array.
+            // We handle this by checking if the word ends with '=' and peeking ahead.
             _ => {
                 let mut word = String::new();
                 word.push(ch);
                 while let Some(c) = self.peek() {
-                    // Break on any structural character or whitespace.
                     if c.is_whitespace() || "|&;<>(){}!\n".contains(c) {
                         break;
                     }
                     word.push(c);
                     self.advance();
                 }
+
+                // Array detection: if word ends with '=' and next non-whitespace is '('
+                if word.ends_with('=') {
+                    let mut temp_pos = self.pos;
+                    while temp_pos < self.input.len() && self.input[temp_pos].is_whitespace() {
+                        temp_pos += 1;
+                    }
+                    if temp_pos < self.input.len() && self.input[temp_pos] == '(' {
+                        return Some(Token::ArrayAssign(word.trim_end_matches('=').to_string()));
+                    }
+                }
+
                 Some(Token::Word(word))
             }
         }
