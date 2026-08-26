@@ -17,7 +17,7 @@ pub struct Job {
 }
 
 pub struct JobTable {
-    jobs: Vec<Job>,
+    pub jobs: Vec<Job>,
     next_id: usize,
 }
 

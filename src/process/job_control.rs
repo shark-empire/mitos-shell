@@ -1,5 +1,5 @@
 use crate::error::Result;
-use nix::unistd::{close, dup2, execvp, fork, pipe, setpgid, ForkResult, Pid};
+use nix::unistd::{close, dup2, execvp, fork, setpgid, ForkResult, Pid};
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
 
