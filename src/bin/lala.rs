@@ -3,7 +3,7 @@ use nix::unistd::{execvp, Gid, Uid, User};
 use std::env;
 use std::ffi::CString;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -41,11 +41,12 @@ fn exec_command(args: &[String]) -> ! {
         .map(|s| CString::new(s.as_str()).unwrap())
         .collect();
 
-    if let Err(e) = execvp(&prog, &c_args) {
-        eprintln!("lala: failed to execute {}: {}", args[0], e);
-        std::process::exit(127);
-    }
-    unreachable!()
+    // nix 0.29's execvp returns Result<Infallible, Errno> — it only returns on
+    // failure, so the Ok arm is unreachable and `if let Err(e) = ...` is now
+    // an irrefutable pattern.
+    let Err(e) = execvp(&prog, &c_args);
+    eprintln!("lala: failed to execute {}: {}", args[0], e);
+    std::process::exit(127);
 }
 
 fn read_password_silently() -> String {
@@ -94,8 +95,16 @@ fn verify_password(username: &str, password: &str) -> bool {
     let c_pass = CString::new(password).unwrap();
     let c_salt = CString::new(expected_hash).unwrap();
 
+    // The `crypt()` binding was removed from the `libc` crate (glibc split it
+    // out into libcrypt/libxcrypt), so declare it ourselves and link against
+    // libcrypt directly, same as the C standard <crypt.h> declaration.
+    #[link(name = "crypt")]
+    extern "C" {
+        fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
+    }
+
     unsafe {
-        let result = libc::crypt(c_pass.as_ptr(), c_salt.as_ptr());
+        let result = crypt(c_pass.as_ptr(), c_salt.as_ptr());
         if result.is_null() {
             return false;
         }
