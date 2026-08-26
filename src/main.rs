@@ -19,6 +19,9 @@ use lexer::lexer::Lexer;
 use parser::parser::Parser;
 use nix::sys::signal::{signal, SigHandler, Signal};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     // Register signal handler
