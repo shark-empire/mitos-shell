@@ -115,6 +115,21 @@ impl Executor {
     }
 
     fn exec_node(&mut self, node: &Node) -> Result<ExecOutcome> {
+        // Check for interrupts (Ctrl+C) and traps
+        if crate::main::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
+            crate::main::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+            
+            if let Some(cmd) = self.traps.get("INT").cloned() {
+                let tokens: Vec<_> = Lexer::new(&cmd).collect();
+                if let Ok(ast) = Parser::new(tokens).parse() {
+                    let _ = self.execute(ast);
+                }
+            } else {
+                eprintln!();
+                return Ok(ExecOutcome::Exit(130));
+            }
+        }
+
         match node {
             Node::Pipeline(p) => self.exec_pipeline(p),
             Node::Sequence(l, r) => match self.exec_node(l)? {
@@ -132,9 +147,7 @@ impl Executor {
                 other => Ok(other),
             },
             Node::Background(inner) => self.exec_background(inner),
-            Node::Subshell(inner) => self.exec_sub                            }
-                            Redirect::Output(p) => {
-                                let fd =shell(inner),
+            Node::Subshell(inner) => self.exec_subshell(inner),
             Node::BraceGroup(inner) => self.exec_node(inner),
             Node::If(c) => self.exec_if(c),
             Node::While(c) => self.exec_while(c),
@@ -260,8 +273,7 @@ impl Executor {
 
     fn exec_for(&mut self, c: &ForClause) -> Result<ExecOutcome> {
         let expander = Expander::new(
-            self.last open(p.as_str(),
-                                    OF_status, 
+            self.last_status, 
             self.current_args().to_vec(), 
             self.options.clone()
         );
@@ -356,15 +368,14 @@ impl Executor {
 
         let mut children = Vec::new();
 
-        for (ilag::O_WRONLY, cmd) in commands.iter().enumerate() {
-            if cmd.args.is | OFlag::_empty() { continue; }
+        for (i, cmd) in commands.iter().enumerate() {
+            if cmd.args.is_empty() { continue; }
 
             match unsafe { fork()? } {
                 ForkResult::Parent { child } => children.push(child),
                 ForkResult::Child => {
                     if i > 0 { dup2(pipes[i - 1].0, 0)?; }
-                    if i < n - 1 { dup2(pipes[i].1, 1)?; }O_CREAT | OFlag::O_TRUNC,
-                                    Mode::from_bits(
+                    if i < n - 1 { dup2(pipes[i].1, 1)?; }
                     for (r, w) in &pipes { let _ = close(*r); let _ = close(*w); }
 
                     for redir in &cmd.redirects {
@@ -376,203 +387,103 @@ impl Executor {
                             Redirect::Output(p) => {
                                 let fd = open(p.as_str(),
                                     OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
-                                    Mode::from_bits(0o640o644).unwrap())4).unwrap())?;
-                               ?;
-                                dup2(fd, dup2(fd, 1)?; 1)?; let _ = close let _ = close(fd);
-                           (fd);
+                                    Mode::from_bits(0o644).unwrap())?;
+                                dup2(fd, 1)?; let _ = close(fd);
                             }
-                            Redirect }
                             Redirect::Append(p) => {
-                               ::Append(p) => {
-                                let fd = open let fd = open(p.as_str(),(p.as_str(),
-                                    OFlag
-                                    OFlag::O_WRONLY |::O_WRONLY | OFlag::O OFlag::O_CREAT | OFlag_CREAT | OFlag::O_APPEND,::O_APPEND,
-                                    Mode::
-                                    Mode::from_bits(0from_bits(0o644o644).unwrap())?).unwrap())?;
-                                dup;
-                                dup2(fd, 2(fd, 1)?; let _ = close(fd1)?; let _ = close(fd);
-                            });
+                                let fd = open(p.as_str(),
+                                    OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
+                                    Mode::from_bits(0o644).unwrap())?;
+                                dup2(fd, 1)?; let _ = close(fd);
                             }
-                        }
-
                         }
                     }
 
                     for (k, v) in &cmd.assignments { set_var(k, v); }
 
-                    let c_args                    }
-
-                    for (k, v) in &cmd.assignments { set_var(k, v); }
-
-                    let c_args: Vec<CString: Vec<CString> = cmd.args> = cmd.args.iter()
-                       .iter()
-                        .map(|s .map(|s| CString::new| CString::new(s.as_str()).(s.as_str()).unwrap())
-                       unwrap())
+                    let c_args: Vec<CString> = cmd.args.iter()
+                        .map(|s| CString::new(s.as_str()).unwrap())
                         .collect();
- .collect();
-                    let _ =                    let _ = nix::unistd nix::unistd::execvp(&::execvp(&c_args[0c_args[0], &c_args], &c_args);
-                    e);
-                    eprintln!("mitosprintln!("mitos: command not found: command not found: {}", cmd.args: {}", cmd.args[0]);
-[0]);
-                    std::process                    std::process::exit(1::exit(127);
-27);
+                    let _ = nix::unistd::execvp(&c_args[0], &c_args);
+                    eprintln!("mitos: command not found: {}", cmd.args[0]);
+                    std::process::exit(127);
                 }
-                           }
             }
-        } }
         }
 
-        for (
-
-        for (r, w)r, w) in pipes { let in pipes { let _ = close(r _ = close(r); let _ =); let _ = close(w); } close(w); }
+        for (r, w) in pipes { let _ = close(r); let _ = close(w); }
 
         let mut last = 0;
-        for
-
-        let mut last = 0;
-        for child in children { child in children {
+        for child in children {
             match waitpid(child, None)? {
-               
-            match waitpid(child, None)? {
-                WaitStatus::Exited WaitStatus::Exited(_, s) =>(_, s) => last = s, last = s,
-                WaitStatus
-                WaitStatus::Signaled(_,::Signaled(_, sig, _) => sig, _) => last = 1 last = 128 + sig28 + sig as i32,
-                _ as i32,
+                WaitStatus::Exited(_, s) => last = s,
+                WaitStatus::Signaled(_, sig, _) => last = 128 + sig as i32,
                 _ => {}
-            => {}
             }
-        } }
         }
-        Ok(last
         Ok(last)
-    })
     }
 
-    fn wait
-
-    fn wait_for_child(&self_for_child(&self, child: Pid, child: Pid) -> Result<i) -> Result<i32> {32> {
-        match wait
+    fn wait_for_child(&self, child: Pid) -> Result<i32> {
         match waitpid(child, None)? {
-           pid(child, None)? {
-            WaitStatus::Exited WaitStatus::Exited(_, s) =>(_, s) => Ok(s),
- Ok(s),
-            WaitStatus::            WaitStatus::Signaled(_, sigSignaled(_, sig, _) => Ok, _) => Ok(128(128 + sig as i + sig as i32),
-32),
-            _ => Ok            _ => Ok(0),
-(0),
+            WaitStatus::Exited(_, s) => Ok(s),
+            WaitStatus::Signaled(_, sig, _) => Ok(128 + sig as i32),
+            _ => Ok(0),
         }
-           }
     }
 
-    fn }
-
-    fn reap_children(&mut reap_children(&mut self) {
- self) {
+    fn reap_children(&mut self) {
         loop {
-        loop {
-            match waitpid            match waitpid(Pid::from(Pid::from_raw(-1), Some(WaitPid_raw(-1), Some(WaitPidFlag::WNOFlag::WNOHANG)) {HANG)) {
-                Ok(WaitStatus::Still
-                Ok(WaitStatus::StillAlive) | ErrAlive) | Err(_) => break,(_) => break,
-                Ok(_)
+            match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::StillAlive) | Err(_) => break,
                 Ok(_) => continue,
- => continue,
             }
-                   }
         }
-    } }
     }
 
-    fn expand
-
-    fn expand_command(&self,_command(&self, command: &Simple command: &SimpleCommand) -> ResultCommand) -> Result<SimpleCommand><SimpleCommand> {
-        let {
-        let expander = Exp expander = Expander::new(ander::new(
-            self.last
+    fn expand_command(&self, command: &SimpleCommand) -> Result<SimpleCommand> {
+        let expander = Expander::new(
             self.last_status,
-           _status,
-            self.current_args(). self.current_args().to_vec(),
-to_vec(),
-            self.options.clone            self.options.clone(),
-        );(),
+            self.current_args().to_vec(),
+            self.options.clone(),
         );
 
-        let mut
-
-        let mut expanded = command.clone expanded = command.clone();
-        expanded();
+        let mut expanded = command.clone();
         expanded.args.clear();
-.args.clear();
-        expanded.assignments        expanded.assignments.clear();
-       .clear();
-        expanded.redirects.clear expanded.redirects.clear();
+        expanded.assignments.clear();
+        expanded.redirects.clear();
 
-        for();
-
-        for arg in &command arg in &command.args {
-           .args {
-            let tokens: Vec let tokens: Vec<Token> = Lexer<Token> = Lexer::new(arg).::new(arg).collect();
-           collect();
-            expanded.args.extend(exp expanded.args.extend(expander.expand_tokens(tokensander.expand_tokens(tokens)?);
-       )?);
+        for arg in &command.args {
+            let tokens: Vec<Token> = Lexer::new(arg).collect();
+            expanded.args.extend(expander.expand_tokens(tokens)?);
         }
 
-        for }
-
-        for (key, value (key, value) in &command) in &command.assignments {
-.assignments {
-            let tokens:            let tokens: Vec<Token> = Vec<Token> = Lexer::new(value Lexer::new(value).collect();
-).collect();
-            let expanded_value            let expanded_value = expander.expand = expander.expand_tokens(tokens)?.into_tokens(tokens)?.into_iter().next()._iter().next().unwrap_or_default();unwrap_or_default();
-            expanded.assign
-            expanded.assignments.push((keyments.push((key.clone(), expanded_value.clone(), expanded_value));
-        }));
+        for (key, value) in &command.assignments {
+            let tokens: Vec<Token> = Lexer::new(value).collect();
+            let expanded_value = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+            expanded.assignments.push((key.clone(), expanded_value));
         }
 
-        for redirect
-
-        for redirect in &command.redirect in &command.redirects {
-           s {
+        for redirect in &command.redirects {
             match redirect {
- match redirect {
-                Redirect::Input(path) => {                Redirect::Input(path) => {
-                    let tokens
-                    let tokens: Vec<Token>: Vec<Token> = Lexer::new = Lexer::new(path).collect();(path).collect();
-                    let p
-                    let p = expander.expand = expander.expand_tokens(tokens)?.into_tokens(tokens)?.into_iter().next()._iter().next().unwrap_or_default();unwrap_or_default();
-                    expanded.redirect
-                    expanded.redirects.push(Reds.push(Redirect::Input(pirect::Input(p));
-                }));
+                Redirect::Input(path) => {
+                    let tokens: Vec<Token> = Lexer::new(path).collect();
+                    let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    expanded.redirects.push(Redirect::Input(p));
                 }
-                Redirect::
-                Redirect::Output(path) =>Output(path) => {
-                    let {
-                    let tokens: Vec<Token tokens: Vec<Token> = Lexer::> = Lexer::new(path).collectnew(path).collect();
-                    let();
-                    let p = expander p = expander.expand_tokens(tokens)?..expand_tokens(tokens)?.into_iter().nextinto_iter().next().unwrap_or_default().unwrap_or_default();
-                    expanded();
-                    expanded.redirects.push(R.redirects.push(Redirect::Outputedirect::Output(p));
-               (p));
+                Redirect::Output(path) => {
+                    let tokens: Vec<Token> = Lexer::new(path).collect();
+                    let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    expanded.redirects.push(Redirect::Output(p));
                 }
-                Redirect }
-                Redirect::Append(path)::Append(path) => {
-                    => {
-                    let tokens: Vec let tokens: Vec<Token> = Lexer<Token> = Lexer::new(path).::new(path).collect();
-                   collect();
-                    let p = exp let p = expander.expand_tokens(tokensander.expand_tokens(tokens)?.into_iter().)?.into_iter().next().unwrap_ornext().unwrap_or_default();
-                   _default();
-                    expanded.redirects.push expanded.redirects.push(Redirect::(Redirect::Append(p));
-Append(p));
+                Redirect::Append(path) => {
+                    let tokens: Vec<Token> = Lexer::new(path).collect();
+                    let p = expander.expand_tokens(tokens)?.into_iter().next().unwrap_or_default();
+                    expanded.redirects.push(Redirect::Append(p));
                 }
-                           }
             }
-        } }
         }
-
-        Ok(exp
 
         Ok(expanded)
-   anded)
     }
-}
- }
 }
