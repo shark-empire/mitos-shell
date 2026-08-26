@@ -16,6 +16,9 @@ pub enum Token {
     LeftBrace,      // {
     RightBrace,     // }
     Bang,           // !
+    HereDocStart(bool), // bool = strip_tabs (<<-)
+    HereString,         // <<<
+    ArrayAssign(String), // e.g., "arr=" (when followed by '(')
     Newline,
     Eof,
 }
