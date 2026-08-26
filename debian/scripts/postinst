@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+    if ! grep -q "^/usr/bin/mitos$" /etc/shells; then
+        echo "/usr/bin/mitos" >> /etc/shells
+    fi
+fi
