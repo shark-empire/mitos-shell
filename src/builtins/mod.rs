@@ -26,6 +26,12 @@ pub fn try_execute(args: &[String]) -> Option<ExecOutcome> {
             let code = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
             Some(ExecOutcome::Exit(code))
         }
+        "set" => {
+    // Note: We need mutable access to options, so we handle 'set' 
+    // directly in the Executor, or pass a mutable reference. 
+    // For simplicity, let's return a special outcome or handle it in Executor.
+    None 
+          }
 
         // Status builtins
         "true" | ":" => Some(ExecOutcome::Status(0)),
