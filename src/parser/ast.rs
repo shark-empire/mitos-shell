@@ -30,7 +30,7 @@ pub struct Pipeline {
 #[derive(Debug, Clone)]
 pub struct SimpleCommand {
     /// VAR=value prefixes
-    pub assignments: Vec<(String, String)>,
+    pub assignments: Vec<Assignment>,
     pub args: Vec<String>,
     pub redirects: Vec<Redirect>,
 }
@@ -40,6 +40,8 @@ pub enum Redirect {
     Input(String),
     Output(String),
     Append(String),
+    HereDoc(String, bool, bool), // (body, strip_tabs, expand_vars)
+    HereString(String),
 }
 
 #[derive(Debug, Clone)]
@@ -80,14 +82,7 @@ pub struct CaseBranch {
     pub body: Node,
 }
 
-#[derive(Debug, Clone)]
-pub enum Redirect {
-    Input(String),
-    Output(String),
-    Append(String),
-    HereDoc(String, bool, bool), // (body, strip_tabs, expand_vars)
-    HereString(String),
-}
+
 
 #[derive(Debug, Clone)]
 pub enum Assignment {
