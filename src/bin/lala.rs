@@ -1,9 +1,9 @@
 // src/bin/lala.rs
+use nix::unistd::{execvp, Gid, Uid, User};
 use std::env;
-use std::fs;
-use std::io::{self, Write, Read};
 use std::ffi::CString;
-use nix::unistd::{Uid, Gid, User, execvp};
+use std::fs;
+use std::io::{self, Read, Write};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -20,9 +20,9 @@ fn main() {
     let current_user = User::from_uid(Uid::current()).unwrap().unwrap();
     eprint!("[lala] password for {}: ", current_user.name);
     io::stderr().flush().unwrap();
-    
+
     let password = read_password_silently();
-    println!(); 
+    println!();
 
     if !verify_password(&current_user.name, &password) {
         eprintln!("lala: authentication failure");
@@ -30,18 +30,21 @@ fn main() {
     }
 
     // Escalate privileges to root (UID 0, GID 0)
-    nix::unistd::setgid(Gid::from_raw(0)).expect("lala: failed to set GID (is it setuid root?)");
-    nix::unistd::setuid(Uid::from_raw(0)).expect("lala: failed to set UID (is it setuid root?)");
+    nix::unistd::setgid(Gid::from_raw(0))
+        .expect("lala: failed to set GID (is it setuid root?)");
+    nix::unistd::setuid(Uid::from_raw(0))
+        .expect("lala: failed to set UID (is it setuid root?)");
 
     exec_command(&args[1..]);
 }
 
 fn exec_command(args: &[String]) -> ! {
     let prog = CString::new(args[0].as_str()).unwrap();
-    let c_args: Vec<CString> = args.iter()
+    let c_args: Vec<CString> = args
+        .iter()
         .map(|s| CString::new(s.as_str()).unwrap())
         .collect();
-    
+
     if let Err(e) = execvp(&prog, &c_args) {
         eprintln!("lala: failed to execute {}: {}", args[0], e);
         std::process::exit(127);
@@ -57,9 +60,9 @@ fn read_password_silently() -> String {
             io::stdin().read_line(&mut pwd).unwrap();
             return pwd.trim().to_string();
         }
-        
+
         let mut new_termios = old_termios;
-        new_termios.c_lflag &= !libc::ECHO; 
+        new_termios.c_lflag &= !libc::ECHO;
         libc::tcsetattr(0, libc::TCSAFLUSH, &new_termios);
 
         let mut pwd = String::new();
@@ -90,12 +93,12 @@ fn verify_password(username: &str, password: &str) -> bool {
     }
 
     if expected_hash.is_empty() || expected_hash == "!" || expected_hash == "*" {
-        return false; 
+        return false;
     }
 
     let c_pass = CString::new(password).unwrap();
-    let c_salt = CString::new(expected_hash).unwrap(); 
-    
+    let c_salt = CString::new(expected_hash).unwrap();
+
     unsafe {
         let result = libc::crypt(c_pass.as_ptr(), c_salt.as_ptr());
         if result.is_null() {
