@@ -19,3 +19,5 @@ thiserror = "1.0"
 # Utilities
 dirs = "5.0"
 glob = "0.3"
+
+ctrlc = "3.4"
