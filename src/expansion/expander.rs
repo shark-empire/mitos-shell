@@ -1,60 +1,81 @@
 use std::env;
 use glob::glob;
+use crate::lexer::token::Token;
+use crate::error::{Result, ShellError};
+use crate::config::options::ShellOptions;
 
 pub struct Expander {
     last_exit_code: i32,
     positional_args: Vec<String>,
+    options: ShellOptions, // Added to support `set -u` (nounset)
 }
 
 impl Expander {
     pub fn new(
         last_exit_code: i32,
         positional_args: Vec<String>,
+        options: ShellOptions, // Pass options from Executor
     ) -> Self {
         Self {
             last_exit_code,
             positional_args,
+            options,
         }
     }
 
-
-
-    /// Expands variables, tildes, and globs for a list of arguments
-    pub fn expand_args(&self, args: Vec<String>) -> Vec<String> {
+    /// Expands variables, tildes, and globs for a list of tokens
+    pub fn expand_tokens(&self, tokens: Vec<Token>) -> Result<Vec<String>> {
         let mut final_args = Vec::new();
 
-        for arg in args {
-            let mut expanded = self.expand_vars(&arg);
-            expanded = self.expand_tilde(&expanded);
-            
-            // Globbing (Wildcard Expansion)
-            if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
-                if let Ok(paths) = glob(&expanded) {
-                    let matches: Vec<_> = paths.filter_map(Result::ok).collect();
-                    if matches.is_empty() {
-                        final_args.push(expanded); // Fallback to literal if no match
-                    } else {
-                        for p in matches {
-                            final_args.push(p.to_string_lossy().into_owned());
-                        }
-                    }
-                } else {
+        for token in tokens {
+            match token {
+                Token::SingleQuoted(s) => {
+                    // Single quotes prevent ALL expansion
+                    final_args.push(s); 
+                }
+                Token::DoubleQuoted(s) => {
+                    // Double quotes allow variables, but prevent globbing
+                    let expanded = self.expand_vars(&s)?;
                     final_args.push(expanded);
                 }
-            } else {
-                final_args.push(expanded);
+                Token::Word(s) => {
+                    // Unquoted words get variables, tildes, AND globs
+                    let mut expanded = self.expand_vars(&s)?;
+                    expanded = self.expand_tilde(&expanded);
+                    
+                    // Globbing
+                    if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
+                        if let Ok(paths) = glob(&expanded) {
+                            let matches: Vec<_> = paths.filter_map(|p| p.ok()).collect();
+                            if matches.is_empty() {
+                                final_args.push(expanded);
+                            } else {
+                                for p in matches { 
+                                    final_args.push(p.to_string_lossy().into_owned()); 
+                                }
+                            }
+                        } else { 
+                            final_args.push(expanded); 
+                        }
+                    } else {
+                        final_args.push(expanded);
+                    }
+                }
+                _ => {} // Ignore structural tokens here
             }
         }
-        final_args
+        Ok(final_args)
     }
 
-    fn expand_vars(&self, input: &str) -> String {
+    fn expand_vars(&self, input: &str) -> Result<String> {
         let mut result = String::new();
         let mut chars = input.chars().peekable();
 
         while let Some(c) = chars.next() {
             if c == '$' {
                 let mut var_name = String::new();
+                
+                // Collect the variable name
                 while let Some(&next) = chars.peek() {
                     if next.is_alphanumeric() || next == '_' {
                         var_name.push(next);
@@ -63,23 +84,37 @@ impl Expander {
                         break;
                     }
                 }
-if var_name == "?" {
-    result.push_str(&self.last_exit_code.to_string());
-} else if var_name == "#" {
-    result.push_str(&self.positional_args.len().to_string());
-} else if var_name == "@" || var_name == "*" {
-    result.push_str(&self.positional_args.join(" "));
-} else if let Ok(index) = var_name.parse::<usize>() {
-    // $1, $2, $3...
-    if index > 0 && index <= self.positional_args.len() {
-        result.push_str(&self.positional_args[index - 1]);
-    }
-} else if let Ok(value) = std::env::var(&var_name) {
-                    result.push_str(&value);
-                 }
 
-                } 
-        result
+                // If there is no variable name (just a stray '$'), keep it
+                if var_name.is_empty() {
+                    result.push('$');
+                    continue;
+                }
+
+                if var_name == "?" {
+                    result.push_str(&self.last_exit_code.to_string());
+                } else if var_name == "#" {
+                    result.push_str(&self.positional_args.len().to_string());
+                } else if var_name == "@" || var_name == "*" {
+                    result.push_str(&self.positional_args.join(" "));
+                } else if let Ok(index) = var_name.parse::<usize>() {
+                    // $1, $2, $3...
+                    if index > 0 && index <= self.positional_args.len() {
+                        result.push_str(&self.positional_args[index - 1]);
+                    }
+                } else if let Ok(value) = env::var(&var_name) {
+                    result.push_str(&value);
+                } else if self.options.nounset {
+                    // `set -u` triggered: Unbound variable error!
+                    return Err(ShellError::Execution(format!("{}: unbound variable", var_name)));
+                }
+                // If not found and nounset is false, it safely expands to an empty string.
+            } else {
+                result.push(c);
+            }
+        }
+        
+        Ok(result)
     }
 
     fn expand_tilde(&self, input: &str) -> String {
