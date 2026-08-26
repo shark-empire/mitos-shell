@@ -56,7 +56,7 @@ impl Parser {
         match self.peek() {
             None => true,
             Some(Token::RightParen) | Some(Token::RightBrace) => true,
-            Some(Token::Word(w)) => matches!(w.as_str(), "then" | "else" | "elif" | "fi" | "do" | "done"),
+            Some(Token::Word(w)) => matches!(w.as_str(), "then" | "else" | "elif" | "fi" | "do" | "done" | "esac"),
             _ => false,
         }
     }
@@ -64,7 +64,7 @@ impl Parser {
     fn is_compound_start(&self) -> bool {
         match self.peek() {
             Some(Token::LeftParen) | Some(Token::LeftBrace) => true,
-            Some(Token::Word(w)) => matches!(w.as_str(), "if" | "while" | "for"),
+            Some(Token::Word(w)) => matches!(w.as_str(), "if" | "while" | "for" | "case"),
             _ => false,
         }
     }
@@ -128,7 +128,6 @@ impl Parser {
         let first = self.parse_command()?;
 
         if matches!(self.peek(), Some(Token::Pipe)) {
-            // Multi-command pipeline: elements must be simple commands.
             let mut commands = match first {
                 Node::Pipeline(p) if p.commands.len() == 1 && !p.negated => p.commands,
                 _ => return Err(ShellError::Syntax("cannot pipe a compound command".into())),
@@ -255,58 +254,108 @@ impl Parser {
         Ok(Node::For(ForClause { var, words, body: Box::new(body) }))
     }
 
+    fn parse_case(&mut self) -> Result<Node> {
+        self.expect_word("case")?;
+        let word = self.expect_any_word()?;
+        self.expect_word("in")?;
+        self.skip_newlines();
+
+        let mut branches = Vec::new();
+
+        while !self.check_word("esac") {
+            if self.peek().is_none() {
+                return Err(ShellError::Syntax("unexpected EOF in case statement".into()));
+            }
+            
+            let mut patterns = Vec::new();
+            
+            loop {
+                if let Some(Token::Word(w)) = self.peek() {
+                    if w == "|" || w == ")" { break; }
+                    patterns.push(w.clone());
+                    self.advance();
+                } else {
+                    break;
+                }
+                
+                if matches!(self.peek(), Some(Token::Word(w)) if w == "|") {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            if patterns.is_empty() {
+                return Err(ShellError::Syntax("expected pattern in case statement".into()));
+            }
+
+            if !matches!(self.peek(), Some(Token::RightParen)) {
+                return Err(ShellError::Syntax("expected ')' after case patterns".into()));
+            }
+            self.advance();
+
+            self.skip_newlines();
+            let body = self.parse_list()?;
+            branches.push(CaseBranch { patterns, body });
+
+            self.skip_newlines();
+            if matches!(self.peek(), Some(Token::Semicolon)) {
+                self.advance();
+                if matches!(self.peek(), Some(Token::Semicolon)) { self.advance(); }
+            }
+            self.skip_newlines();
+        }
+
+        self.expect_word("esac")?;
+        Ok(Node::Case(CaseClause { word, branches }))
+    }
+
     fn parse_simple_command(&mut self) -> Result<SimpleCommand> {
-        let mut assignments = Vec::new();
+        let mut assignments: Vec<Assignment> = Vec::new();
         let mut args = Vec::new();
         let mut redirects = Vec::new();
+        let mut pending_heredocs: Vec<(String, bool)> = Vec::new(); 
 
         loop {
             match self.peek() {
-                // Inside parse_simple_command():
-// 1. Handle Array Assignments
-if let Some(Token::ArrayAssign(name)) = self.peek() {
-    let name = name.clone();
-    self.advance(); // consume ArrayAssign
-    self.expect_token(Token::LeftParen)?;
-    
-    let mut elements = Vec::new();
-    while let Some(Token::Word(w)) = self.peek() {
-        elements.push(w.clone());
-        self.advance();
-    }
-    self.expect_token(Token::RightParen)?;
-    assignments.push(Assignment::Array(name, elements));
-    continue;
-}
+                Some(Token::ArrayAssign(name)) => {
+                    let name = name.clone();
+                    self.advance(); 
+                    self.expect_token(Token::LeftParen)?;
+                    
+                    let mut elements = Vec::new();
+                    while let Some(Token::Word(w)) = self.peek() {
+                        if w == ")" { break; }
+                        elements.push(w.clone());
+                        self.advance();
+                    }
+                    self.expect_token(Token::RightParen)?;
+                    assignments.push(Assignment::Array(name, elements));
+                    continue;
+                }
 
-// 2. Handle Here-Docs and Here-Strings in redirections
-Some(Token::HereString) => {
-    self.advance();
-    let word = self.expect_any_word()?;
-    redirects.push(Redirect::HereString(word));
-}
-Some(Token::HereDocStart(strip_tabs)) => {
-    self.advance();
-    let delimiter = self.expect_any_word()?;
-    
-    // In a real shell, the body is read from subsequent lines.
-    // For MITOS, since rustyline gives us the whole multi-line string at once,
-    // we can just read tokens until we find the delimiter on its own line.
-    // (Simplified: just read the next word as the body for now, or implement 
-    // a line-by-line reader in the Executor).
-    // Let's use a placeholder that the Executor will resolve.
-              redirects.push(Redirect::HereDoc(delimiter, strip_tabs, true));
-           }
+                Some(Token::HereString) => {
+                    self.advance();
+                    let word = self.expect_any_word()?;
+                    redirects.push(Redirect::HereString(word));
+                }
+                
+                Some(Token::HereDocStart(strip_tabs)) => {
+                    let strip_tabs = *strip_tabs;
+                    self.advance();
+                    let delimiter = self.expect_any_word()?;
+                    pending_heredocs.push((delimiter, strip_tabs));
+                }
 
                 Some(Token::Word(w)) => {
-                    // VAR=value allowed as a prefix before the first real argument.
-                    if args.is_empty() && is_assignment(w) {
+                    let w = w.clone();
+                    if args.is_empty() && assignments.is_empty() && is_assignment(&w) {
                         let (k, v) = w.split_once('=').unwrap();
-                        assignments.push((k.to_string(), v.to_string()));
+                        assignments.push(Assignment::Scalar(k.to_string(), v.to_string()));
                         self.advance();
                         continue;
                     }
-                    args.push(w.clone());
+                    args.push(w);
                     self.advance();
                 }
                 Some(Token::RedirectIn) => {
@@ -321,14 +370,76 @@ Some(Token::HereDocStart(strip_tabs)) => {
                     self.advance();
                     redirects.push(Redirect::Append(self.expect_any_word()?));
                 }
-                _ => break,
+                Some(Token::Newline) | Some(Token::Semicolon) | Some(Token::Pipe) | 
+                Some(Token::And) | Some(Token::Or) | Some(Token::Background) |
+                Some(Token::RightParen) | Some(Token::RightBrace) | None => {
+                    break;
+                }
+                _ => {
+                    self.advance(); 
+                    break;
+                }
             }
+        }
+
+        for (delimiter, strip_tabs) in pending_heredocs {
+            let body = self.read_heredoc_body(&delimiter, strip_tabs)?;
+            redirects.push(Redirect::HereDoc(body, strip_tabs, true));
         }
 
         if args.is_empty() && assignments.is_empty() && redirects.is_empty() {
             return Err(ShellError::Syntax("expected a command".into()));
         }
         Ok(SimpleCommand { assignments, args, redirects })
+    }
+
+    fn read_heredoc_body(&mut self, delimiter: &str, strip_tabs: bool) -> Result<String> {
+        let mut body = String::new();
+        let mut line_buffer = String::new();
+        
+        if matches!(self.peek(), Some(Token::Newline)) {
+            self.advance();
+        }
+
+        loop {
+            match self.advance() {
+                Some(Token::Newline) => {
+                    let line_to_check = if strip_tabs {
+                        line_buffer.trim_start_matches('\t').to_string()
+                    } else {
+                        line_buffer.clone()
+                    };
+                    
+                    if line_to_check.trim_end() == delimiter {
+                        break;
+                    }
+                    body.push_str(&line_buffer);
+                    body.push('\n');
+                    line_buffer.clear();
+                }
+                Some(Token::Word(w)) => {
+                    line_buffer.push_str(&w);
+                    line_buffer.push(' '); 
+                }
+                Some(Token::SingleQuoted(s)) => {
+                    line_buffer.push('\'');
+                    line_buffer.push_str(&s);
+                    line_buffer.push('\'');
+                    line_buffer.push(' ');
+                }
+                Some(Token::DoubleQuoted(s)) => {
+                    line_buffer.push('"');
+                    line_buffer.push_str(&s);
+                    line_buffer.push('"');
+                    line_buffer.push(' ');
+                }
+                Some(_) => {
+                    line_buffer.push(' ');
+                }
+                None => return Err(ShellError::Syntax(format!("unterminated here-doc {}", delimiter))),
+            }
+        }
+        Ok(body)
     }
 }
 
@@ -341,46 +452,3 @@ fn is_assignment(word: &str) -> bool {
         false
     }
 }
-
-fn parse_case(&mut self) -> Result<Node> {
-    self.expect_word("case")?;
-    let word = self.expect_any_word()?;
-    self.expect_word("in")?;
-    self.skip_newlines();
-
-    let mut branches = Vec::new();
-
-    while !self.check_word("esac") {
-        let mut patterns = Vec::new();
-        
-        // Parse patterns (e.g., start|stop)
-        loop {
-            patterns.push(self.expect_any_word()?);
-            if matches!(self.peek(), Some(Token::Word(w)) if w == "|") {
-                self.advance();
-            } else {
-                break;
-            }
-        }
-
-        // Expect ')' after patterns
-        if !matches!(self.peek(), Some(Token::RightParen)) {
-            return Err(ShellError::Syntax("expected ')' after case patterns".into()));
-        }
-        self.advance();
-
-        let body = self.parse_list()?;
-        branches.push(CaseBranch { patterns, body });
-
-        // Expect ';;' or newline/esac
-        if matches!(self.peek(), Some(Token::Semicolon)) {
-            self.advance();
-            if matches!(self.peek(), Some(Token::Semicolon)) { self.advance(); }
-        }
-        self.skip_newlines();
-    }
-
-    self.expect_word("esac")?;
-    Ok(Node::Case(CaseClause { word, branches }))
-}
-
