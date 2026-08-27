@@ -153,3 +153,29 @@ impl Iterator for Lexer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokenizes_simple_command() {
+        let tokens: Vec<Token> = Lexer::new("echo hello").collect();
+        assert_eq!(tokens, vec![Token::Word("echo".into()), Token::Word("hello".into())]);
+    }
+
+    #[test]
+    fn tokenizes_quotes() {
+        let tokens: Vec<Token> = Lexer::new("echo 'single' \"double\"").collect();
+        assert_eq!(tokens[1], Token::SingleQuoted("single".into()));
+        assert_eq!(tokens[2], Token::DoubleQuoted("double".into()));
+    }
+
+    #[test]
+    fn tokenizes_operators() {
+        let tokens: Vec<Token> = Lexer::new("a | b && c").collect();
+        assert_eq!(tokens[1], Token::Pipe);
+        assert_eq!(tokens[3], Token::And);
+    }
+}
+
