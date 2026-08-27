@@ -164,7 +164,10 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
             }
         }
 
-        "trap" => Some(ExecOutcome::Status(trap::execute(args, &mut executor.traps))),
+        "trap" => Some(ExecOutcome::Status(trap::execute(
+            args,
+            &mut executor.traps,
+        ))),
 
         _ => None, // Not a builtin, fallback to external execution
     }
