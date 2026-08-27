@@ -519,3 +519,31 @@ fn is_assignment(word: &str) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::lexer::Lexer;
+
+    #[test]
+    fn parses_simple_command() {
+        let tokens: Vec<Token> = Lexer::new("ls -la").collect();
+        match Parser::new(tokens).parse().unwrap() {
+            Node::Pipeline(p) => {
+                assert_eq!(p.commands.len(), 1);
+                assert_eq!(p.commands[0].args, vec!["ls".to_string(), "-la".to_string()]);
+            }
+            _ => panic!("expected pipeline"),
+        }
+    }
+
+    #[test]
+    fn parses_pipeline() {
+        let tokens: Vec<Token> = Lexer::new("cat f | grep x").collect();
+        match Parser::new(tokens).parse().unwrap() {
+            Node::Pipeline(p) => assert_eq!(p.commands.len(), 2),
+            _ => panic!("expected pipeline"),
+        }
+    }
+}
+
