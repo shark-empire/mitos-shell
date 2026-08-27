@@ -216,14 +216,19 @@ mod tests {
     fn expands_variables() {
         std::env::set_var("MITOS_TEST_VAR", "world");
         let tokens: Vec<Token> = Lexer::new("$MITOS_TEST_VAR").collect();
-        assert_eq!(expander().expand_tokens(tokens).unwrap(), vec!["world".to_string()]);
+        assert_eq!(
+            expander().expand_tokens(tokens).unwrap(),
+            vec!["world".to_string()]
+        );
     }
 
     #[test]
     fn single_quotes_prevent_expansion() {
         std::env::set_var("MITOS_TEST_VAR", "world");
         let tokens: Vec<Token> = Lexer::new("'$MITOS_TEST_VAR'").collect();
-        assert_eq!(expander().expand_tokens(tokens).unwrap(), vec!["$MITOS_TEST_VAR".to_string()]);
+        assert_eq!(
+            expander().expand_tokens(tokens).unwrap(),
+            vec!["$MITOS_TEST_VAR".to_string()]
+        );
     }
 }
-
