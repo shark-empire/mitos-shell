@@ -161,7 +161,10 @@ mod tests {
     #[test]
     fn tokenizes_simple_command() {
         let tokens: Vec<Token> = Lexer::new("echo hello").collect();
-        assert_eq!(tokens, vec![Token::Word("echo".into()), Token::Word("hello".into())]);
+        assert_eq!(
+            tokens,
+            vec![Token::Word("echo".into()), Token::Word("hello".into())]
+        );
     }
 
     #[test]
@@ -178,4 +181,3 @@ mod tests {
         assert_eq!(tokens[3], Token::And);
     }
 }
-
