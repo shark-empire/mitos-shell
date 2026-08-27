@@ -531,7 +531,10 @@ mod tests {
         match Parser::new(tokens).parse().unwrap() {
             Node::Pipeline(p) => {
                 assert_eq!(p.commands.len(), 1);
-                assert_eq!(p.commands[0].args, vec!["ls".to_string(), "-la".to_string()]);
+                assert_eq!(
+                    p.commands[0].args,
+                    vec!["ls".to_string(), "-la".to_string()]
+                );
             }
             _ => panic!("expected pipeline"),
         }
@@ -546,4 +549,3 @@ mod tests {
         }
     }
 }
-
