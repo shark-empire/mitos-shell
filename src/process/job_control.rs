@@ -1,3 +1,10 @@
+// Reserved: a single-command spawn helper with proper POSIX process-group
+// setup (setpgid), intended to back real job control (fg/bg/Ctrl-Z).
+// `Executor::fork_pipeline` currently does its own inline forking for
+// multi-command pipelines (redirects, heredocs, N-way pipe wiring) and does
+// not yet delegate to this; wiring the two together is a larger follow-up.
+#![allow(dead_code)]
+
 use crate::error::Result;
 use nix::unistd::{close, dup2, execvp, fork, setpgid, ForkResult, Pid};
 use std::ffi::CString;
