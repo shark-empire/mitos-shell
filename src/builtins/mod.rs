@@ -65,6 +65,9 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
                 };
                 println!("[{}]  {}  {}", job.id, state, job.command);
             }
+            // Finished jobs are shown once as "Done", then pruned so they
+            // don't linger in subsequent `jobs` listings.
+            executor.jobs.cleanup_finished();
             Some(ExecOutcome::Status(0))
         }
         "fg" => {
@@ -160,6 +163,8 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
                 Some(ExecOutcome::Status(1))
             }
         }
+
+        "trap" => Some(ExecOutcome::Status(trap::execute(args, &mut executor.traps))),
 
         _ => None, // Not a builtin, fallback to external execution
     }

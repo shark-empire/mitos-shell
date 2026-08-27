@@ -101,11 +101,11 @@ pub fn execute(args: &[String]) -> i32 {
         Ok(0) => {
             // EOF.
             assign_variables(&vars, "");
-            return 1;
+            1
         }
 
         Ok(_) => {
-            let line = line.trim_end_matches(|c| c == '\n' || c == '\r');
+            let line = line.trim_end_matches(['\n', '\r']);
             assign_variables(&vars, line);
             0
         }
