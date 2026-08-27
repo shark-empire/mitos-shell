@@ -6,7 +6,7 @@ use crate::lexer::lexer::Lexer;
 use crate::lexer::token::Token;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
-use crate::process::job::JobTable;
+use crate::process::job::{JobStatus, JobTable};
 use crate::terminal::tty::TtyManager;
 use crate::util::set_var;
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
@@ -495,6 +495,12 @@ impl Executor {
         loop {
             match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
                 Ok(WaitStatus::StillAlive) | Err(_) => break,
+                Ok(WaitStatus::Exited(pid, code)) => {
+                    self.jobs.update_status(pid, JobStatus::Exited(code));
+                }
+                Ok(WaitStatus::Signaled(pid, sig, _)) => {
+                    self.jobs.update_status(pid, JobStatus::Signaled(sig));
+                }
                 Ok(_) => continue,
             }
         }
