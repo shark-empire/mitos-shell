@@ -11,7 +11,7 @@ pub fn expand_arithmetic(input: &str) -> String {
             if let Some((expr, end)) = extract_arithmetic(&chars, i + 3) {
                 match evaluate(&expr) {
                     Ok(value) => result.push_str(&value.to_string()),
-                    Err(_) => result.push_str("0"),
+                    Err(_) => result.push('0'),
                 }
                 i = end;
                 continue;

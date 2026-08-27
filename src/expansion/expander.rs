@@ -155,8 +155,7 @@ impl Expander {
                 let suffix = &input[end + 1..];
 
                 // 1. ${arr[@]} - Expands to multiple words
-                if inner.ends_with("[@]") {
-                    let name = &inner[..inner.len() - 3];
+                if let Some(name) = inner.strip_suffix("[@]") {
                     if let Some(arr) = self.arrays.get(name) {
                         if prefix.is_empty() && suffix.is_empty() {
                             return Ok(arr.clone());
@@ -170,8 +169,7 @@ impl Expander {
                     }
                 }
                 // 2. ${arr[*]} - Expands to single word joined by spaces
-                else if inner.ends_with("[*]") {
-                    let name = &inner[..inner.len() - 3];
+                else if let Some(name) = inner.strip_suffix("[*]") {
                     if let Some(arr) = self.arrays.get(name) {
                         let joined = arr.join(" ");
                         return Ok(vec![format!("{}{}{}", prefix, joined, suffix)]);
