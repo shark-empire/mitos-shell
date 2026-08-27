@@ -311,16 +311,12 @@ impl Parser {
 
             let mut patterns = Vec::new();
 
-            loop {
-                if let Some(Token::Word(w)) = self.peek() {
-                    if w == "|" || w == ")" {
-                        break;
-                    }
-                    patterns.push(w.clone());
-                    self.advance();
-                } else {
+            while let Some(Token::Word(w)) = self.peek() {
+                if w == "|" || w == ")" {
                     break;
                 }
+                patterns.push(w.clone());
+                self.advance();
 
                 if matches!(self.peek(), Some(Token::Word(w)) if w == "|") {
                     self.advance();
