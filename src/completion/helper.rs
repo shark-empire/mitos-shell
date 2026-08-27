@@ -27,8 +27,8 @@ impl Completer for MitosHelper {
             return Ok((start, complete_variables(var_prefix)));
         }
 
-        let is_first = line[..start].trim().is_empty()
-            || line[..start].trim_end().ends_with([';', '|']);
+        let is_first =
+            line[..start].trim().is_empty() || line[..start].trim_end().ends_with([';', '|']);
         if is_first {
             let mut c = complete_commands(&word);
             c.extend(complete_files(&word));
