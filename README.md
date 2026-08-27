@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-1.70+-orange?logo=rust" alt="Rust">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
-  <img src="https://img.shields.io/github/actions/workflow/status/yourusername/mitos-shell/ci.yml?branch=main&label=CI" alt="CI Status">
+  <img src="https://img.shields.io/github/actions/workflow/status/shark-empire/mitos-shell/ci.yml?branch=main&label=CI" alt="CI Status">
 </p>
 
 <h1 align="center">MITOS OS</h1>
