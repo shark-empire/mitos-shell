@@ -1,4 +1,3 @@
-use crate::builtins::alias;
 use crate::completion::helper::MitosHelper;
 use crate::config::startup;
 use crate::execution::executor::Executor;
@@ -73,8 +72,8 @@ impl Session {
     }
 
     fn execute_line(&mut self, line: &str) -> Option<i32> {
-        // Expand aliases before parsing.
-        let expanded = alias::expand(line);
+        // Line-level pre-expansion: aliases, command substitution, arithmetic.
+        let expanded = crate::expansion::pipeline::expand_line(line);
 
         let tokens: Vec<_> = Lexer::new(&expanded).collect();
 
