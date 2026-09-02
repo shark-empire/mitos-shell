@@ -1,3 +1,581 @@
 pub mod ast;
-#[allow(clippy::module_inception)]
-pub mod parser;
+
+use crate::error::{Result, ShellError};
+use crate::lexer::token::Token;
+use crate::parser::ast::*;
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    // ---------- token helpers ----------
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.pos)
+    }
+
+    fn advance(&mut self) -> Option<Token> {
+        let t = self.tokens.get(self.pos).cloned();
+        self.pos += 1;
+        t
+    }
+
+    fn check_token(&self, expected: &Token) -> bool {
+        matches!(self.peek(), Some(t) if std::mem::discriminant(t) == std::mem::discriminant(expected))
+    }
+
+    fn check_word(&self, word: &str) -> bool {
+        matches!(self.peek(), Some(Token::Word(w)) if w == word)
+    }
+
+    fn expect_token(&mut self, expected: Token) -> Result<()> {
+        if self.check_token(&expected) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(ShellError::Syntax(format!("expected {:?}", expected)))
+        }
+    }
+
+    fn expect_word(&mut self, word: &str) -> Result<()> {
+        match self.advance() {
+            Some(Token::Word(w)) if w == word => Ok(()),
+            other => Err(ShellError::Syntax(format!(
+                "expected '{}', found {:?}",
+                word, other
+            ))),
+        }
+    }
+
+    fn expect_any_word(&mut self) -> Result<String> {
+        match self.advance() {
+            Some(Token::Word(w)) => Ok(w),
+            other => Err(ShellError::Syntax(format!(
+                "expected a word, found {:?}",
+                other
+            ))),
+        }
+    }
+
+    /// Like [`Parser::expect_any_word`], but also accepts a quoted string
+    /// in word position — e.g. a case subject (`case "$1" in`), a redirect
+    /// target (`< "my file"`), or a here-string (`<<< "$var"`) — instead
+    /// of only a bare `Token::Word`. The token is re-serialized back into
+    /// raw text (see [`requote`]) so the later expansion pass re-lexes it
+    /// into the same quoted/unquoted kind.
+    fn expect_word_like(&mut self) -> Result<String> {
+        match self.advance() {
+            Some(token) => match requote(&token) {
+                Some(word) => Ok(word),
+                None => Err(ShellError::Syntax(format!(
+                    "expected a word, found {:?}",
+                    token
+                ))),
+            },
+            None => Err(ShellError::Syntax(
+                "expected a word, found end of input".to_string(),
+            )),
+        }
+    }
+
+    fn skip_newlines(&mut self) {
+        while matches!(self.peek(), Some(Token::Newline)) {
+            self.advance();
+        }
+    }
+
+    fn is_list_terminator(&self) -> bool {
+        match self.peek() {
+            None => true,
+            Some(Token::RightParen) | Some(Token::RightBrace) => true,
+            Some(Token::Word(w)) => matches!(
+                w.as_str(),
+                "then" | "else" | "elif" | "fi" | "do" | "done" | "esac"
+            ),
+            _ => false,
+        }
+    }
+
+    fn is_compound_start(&self) -> bool {
+        match self.peek() {
+            Some(Token::LeftParen) | Some(Token::LeftBrace) => true,
+            Some(Token::Word(w)) => matches!(w.as_str(), "if" | "while" | "for" | "case"),
+            _ => false,
+        }
+    }
+
+    // ---------- entry ----------
+    pub fn parse(&mut self) -> Result<Node> {
+        self.skip_newlines();
+        let node = self.parse_list()?;
+        self.skip_newlines();
+        if let Some(extra) = self.peek() {
+            return Err(ShellError::Syntax(format!("unexpected token {:?}", extra)));
+        }
+        Ok(node)
+    }
+
+    // list := and_or ( (';' | '&' | NEWLINE) and_or )*
+    fn parse_list(&mut self) -> Result<Node> {
+        let mut left = self.parse_and_or()?;
+        loop {
+            match self.peek() {
+                Some(Token::Semicolon) | Some(Token::Newline) => {
+                    self.advance();
+                    self.skip_newlines();
+                    if self.is_list_terminator() {
+                        return Ok(left);
+                    }
+                    let right = self.parse_and_or()?;
+                    left = Node::Sequence(Box::new(left), Box::new(right));
+                }
+                Some(Token::Background) => {
+                    self.advance();
+                    left = Node::Background(Box::new(left));
+                    self.skip_newlines();
+                    if self.is_list_terminator() {
+                        return Ok(left);
+                    }
+                    let right = self.parse_and_or()?;
+                    left = Node::Sequence(Box::new(left), Box::new(right));
+                }
+                _ => return Ok(left),
+            }
+        }
+    }
+
+    // and_or := pipeline ( ('&&' | '||') pipeline )*
+    fn parse_and_or(&mut self) -> Result<Node> {
+        let mut left = self.parse_pipeline()?;
+        loop {
+            let op = match self.peek() {
+                Some(Token::And) => ListOp::And,
+                Some(Token::Or) => ListOp::Or,
+                _ => return Ok(left),
+            };
+            self.advance();
+            self.skip_newlines();
+            let right = self.parse_pipeline()?;
+            left = Node::AndOr(Box::new(left), op, Box::new(right));
+        }
+    }
+
+    // pipeline := ['!'] command ( '|' command )*
+    fn parse_pipeline(&mut self) -> Result<Node> {
+        let negated = if matches!(self.peek(), Some(Token::Bang)) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        let first = self.parse_command()?;
+
+        if matches!(self.peek(), Some(Token::Pipe)) {
+            let mut commands = match first {
+                Node::Pipeline(p) if p.commands.len() == 1 && !p.negated => p.commands,
+                _ => return Err(ShellError::Syntax("cannot pipe a compound command".into())),
+            };
+            while matches!(self.peek(), Some(Token::Pipe)) {
+                self.advance();
+                self.skip_newlines();
+                commands.push(self.parse_simple_command()?);
+            }
+            return Ok(Node::Pipeline(Pipeline { commands, negated }));
+        }
+
+        if negated {
+            if let Node::Pipeline(mut p) = first {
+                p.negated = true;
+                return Ok(Node::Pipeline(p));
+            }
+        }
+        Ok(first)
+    }
+
+    // command := function_def | compound | simple_command
+    fn parse_command(&mut self) -> Result<Node> {
+        if self.is_compound_start() {
+            return self.parse_compound();
+        }
+
+        // function definition: NAME '(' ')' compound
+        if let Some(Token::Word(name)) = self.peek().cloned() {
+            let is_func = matches!(self.tokens.get(self.pos + 1), Some(Token::LeftParen))
+                && matches!(self.tokens.get(self.pos + 2), Some(Token::RightParen));
+            if is_func {
+                self.advance();
+                self.advance();
+                self.advance();
+                let body = self.parse_compound()?;
+                return Ok(Node::Function(FunctionDef {
+                    name,
+                    body: Box::new(body),
+                }));
+            }
+        }
+
+        let cmd = self.parse_simple_command()?;
+        Ok(Node::Pipeline(Pipeline {
+            commands: vec![cmd],
+            negated: false,
+        }))
+    }
+
+    fn parse_compound(&mut self) -> Result<Node> {
+        match self.peek() {
+            Some(Token::LeftParen) => {
+                self.advance();
+                self.skip_newlines();
+                let inner = self.parse_list()?;
+                self.skip_newlines();
+                self.expect_token(Token::RightParen)?;
+                Ok(Node::Subshell(Box::new(inner)))
+            }
+            Some(Token::LeftBrace) => {
+                self.advance();
+                self.skip_newlines();
+                let inner = self.parse_list()?;
+                self.skip_newlines();
+                self.expect_token(Token::RightBrace)?;
+                Ok(Node::BraceGroup(Box::new(inner)))
+            }
+            Some(Token::Word(w)) if w == "case" => self.parse_case(),
+            Some(Token::Word(w)) if w == "if" => self.parse_if(),
+            Some(Token::Word(w)) if w == "while" => self.parse_while(),
+            Some(Token::Word(w)) if w == "for" => self.parse_for(),
+            _ => Err(ShellError::Syntax("expected a compound command".into())),
+        }
+    }
+
+    fn parse_if(&mut self) -> Result<Node> {
+        self.expect_word("if")?;
+        let condition = self.parse_list()?;
+        self.expect_word("then")?;
+        let then_branch = self.parse_list()?;
+
+        let else_branch = if self.check_word("else") {
+            self.advance();
+            Some(Box::new(self.parse_list()?))
+        } else {
+            None
+        };
+
+        self.expect_word("fi")?;
+        Ok(Node::If(IfClause {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch,
+        }))
+    }
+
+    fn parse_while(&mut self) -> Result<Node> {
+        self.expect_word("while")?;
+        let condition = self.parse_list()?;
+        self.expect_word("do")?;
+        let body = self.parse_list()?;
+        self.expect_word("done")?;
+        Ok(Node::While(WhileClause {
+            condition: Box::new(condition),
+            body: Box::new(body),
+        }))
+    }
+
+    fn parse_for(&mut self) -> Result<Node> {
+        self.expect_word("for")?;
+        let var = self.expect_any_word()?;
+
+        let mut words = Vec::new();
+        if self.check_word("in") {
+            self.advance();
+            loop {
+                match self.peek() {
+                    Some(Token::Word(w)) if w == "do" => break,
+                    Some(Token::Word(_))
+                    | Some(Token::SingleQuoted(_))
+                    | Some(Token::DoubleQuoted(_)) => {
+                        let token = self.advance().unwrap();
+                        if let Some(word) = requote(&token) {
+                            words.push(word);
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        if matches!(self.peek(), Some(Token::Semicolon) | Some(Token::Newline)) {
+            self.advance();
+            self.skip_newlines();
+        }
+
+        self.expect_word("do")?;
+        let body = self.parse_list()?;
+        self.expect_word("done")?;
+        Ok(Node::For(ForClause {
+            var,
+            words,
+            body: Box::new(body),
+        }))
+    }
+
+    fn parse_case(&mut self) -> Result<Node> {
+        self.expect_word("case")?;
+        let word = self.expect_word_like()?;
+        self.expect_word("in")?;
+        self.skip_newlines();
+
+        let mut branches = Vec::new();
+
+        while !self.check_word("esac") {
+            if self.peek().is_none() {
+                return Err(ShellError::Syntax(
+                    "unexpected EOF in case statement".into(),
+                ));
+            }
+
+            let mut patterns = Vec::new();
+
+            while let Some(Token::Word(w)) = self.peek() {
+                if w == "|" || w == ")" {
+                    break;
+                }
+                patterns.push(w.clone());
+                self.advance();
+
+                if matches!(self.peek(), Some(Token::Word(w)) if w == "|") {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+
+            if patterns.is_empty() {
+                return Err(ShellError::Syntax(
+                    "expected pattern in case statement".into(),
+                ));
+            }
+
+            if !matches!(self.peek(), Some(Token::RightParen)) {
+                return Err(ShellError::Syntax(
+                    "expected ')' after case patterns".into(),
+                ));
+            }
+            self.advance();
+
+            self.skip_newlines();
+            let body = self.parse_list()?;
+            branches.push(CaseBranch { patterns, body });
+
+            self.skip_newlines();
+            if matches!(self.peek(), Some(Token::Semicolon)) {
+                self.advance();
+                if matches!(self.peek(), Some(Token::Semicolon)) {
+                    self.advance();
+                }
+            }
+            self.skip_newlines();
+        }
+
+        self.expect_word("esac")?;
+        Ok(Node::Case(CaseClause { word, branches }))
+    }
+
+    fn parse_simple_command(&mut self) -> Result<SimpleCommand> {
+        let mut assignments: Vec<Assignment> = Vec::new();
+        let mut args = Vec::new();
+        let mut redirects = Vec::new();
+        let mut pending_heredocs: Vec<(String, bool)> = Vec::new();
+
+        loop {
+            match self.peek() {
+                Some(Token::ArrayAssign(name)) => {
+                    let name = name.clone();
+                    self.advance();
+                    self.expect_token(Token::LeftParen)?;
+
+                    let mut elements = Vec::new();
+                    while let Some(Token::Word(w)) = self.peek() {
+                        if w == ")" {
+                            break;
+                        }
+                        elements.push(w.clone());
+                        self.advance();
+                    }
+                    self.expect_token(Token::RightParen)?;
+                    assignments.push(Assignment::Array(name, elements));
+                    continue;
+                }
+
+                Some(Token::HereString) => {
+                    self.advance();
+                    let word = self.expect_word_like()?;
+                    redirects.push(Redirect::HereString(word));
+                }
+
+                Some(Token::HereDocStart(strip_tabs)) => {
+                    let strip_tabs = *strip_tabs;
+                    self.advance();
+                    let delimiter = self.expect_any_word()?;
+                    pending_heredocs.push((delimiter, strip_tabs));
+                }
+
+                Some(Token::Word(w)) => {
+                    let w = w.clone();
+                    if args.is_empty() && assignments.is_empty() && is_assignment(&w) {
+                        let (k, v) = w.split_once('=').unwrap();
+                        assignments.push(Assignment::Scalar(k.to_string(), v.to_string()));
+                        self.advance();
+                        continue;
+                    }
+                    args.push(w);
+                    self.advance();
+                }
+                Some(Token::SingleQuoted(_)) | Some(Token::DoubleQuoted(_)) => {
+                    let token = self.advance().unwrap();
+                    if let Some(word) = requote(&token) {
+                        args.push(word);
+                    }
+                }
+                Some(Token::RedirectIn) => {
+                    self.advance();
+                    redirects.push(Redirect::Input(self.expect_word_like()?));
+                }
+                Some(Token::RedirectOut) => {
+                    self.advance();
+                    redirects.push(Redirect::Output(self.expect_word_like()?));
+                }
+                Some(Token::AppendOut) => {
+                    self.advance();
+                    redirects.push(Redirect::Append(self.expect_word_like()?));
+                }
+                Some(Token::Newline)
+                | Some(Token::Semicolon)
+                | Some(Token::Pipe)
+                | Some(Token::And)
+                | Some(Token::Or)
+                | Some(Token::Background)
+                | Some(Token::RightParen)
+                | Some(Token::RightBrace)
+                | None => {
+                    break;
+                }
+                _ => {
+                    self.advance();
+                    break;
+                }
+            }
+        }
+
+        for (delimiter, strip_tabs) in pending_heredocs {
+            let body = self.read_heredoc_body(&delimiter, strip_tabs)?;
+            redirects.push(Redirect::HereDoc(body, strip_tabs, true));
+        }
+
+        if args.is_empty() && assignments.is_empty() && redirects.is_empty() {
+            return Err(ShellError::Syntax("expected a command".into()));
+        }
+        Ok(SimpleCommand {
+            assignments,
+            args,
+            redirects,
+        })
+    }
+
+    fn read_heredoc_body(&mut self, delimiter: &str, strip_tabs: bool) -> Result<String> {
+        let mut body = String::new();
+        let mut line_buffer = String::new();
+
+        if matches!(self.peek(), Some(Token::Newline)) {
+            self.advance();
+        }
+
+        loop {
+            match self.advance() {
+                Some(Token::Newline) => {
+                    let line_to_check = if strip_tabs {
+                        line_buffer.trim_start_matches('\t').to_string()
+                    } else {
+                        line_buffer.clone()
+                    };
+
+                    if line_to_check.trim_end() == delimiter {
+                        break;
+                    }
+                    body.push_str(&line_buffer);
+                    body.push('\n');
+                    line_buffer.clear();
+                }
+                Some(Token::Word(w)) => {
+                    line_buffer.push_str(&w);
+                    line_buffer.push(' ');
+                }
+                Some(Token::SingleQuoted(s)) => {
+                    line_buffer.push('\'');
+                    line_buffer.push_str(&s);
+                    line_buffer.push('\'');
+                    line_buffer.push(' ');
+                }
+                Some(Token::DoubleQuoted(s)) => {
+                    line_buffer.push('"');
+                    line_buffer.push_str(&s);
+                    line_buffer.push('"');
+                    line_buffer.push(' ');
+                }
+                Some(_) => {
+                    line_buffer.push(' ');
+                }
+                None => {
+                    return Err(ShellError::Syntax(format!(
+                        "unterminated here-doc {}",
+                        delimiter
+                    )))
+                }
+            }
+        }
+        Ok(body)
+    }
+}
+
+/// Re-serializes a lexed word/quoted-string token back into raw text
+/// that, when lexed again later during expansion, reproduces the same
+/// token kind. Used so quoted command arguments, redirect targets, case
+/// subjects, and for-loop items survive parsing instead of being
+/// silently dropped (the parser previously only recognized bare
+/// `Token::Word`). Returns `None` for token kinds that aren't word-like.
+fn requote(token: &Token) -> Option<String> {
+    match token {
+        Token::Word(w) => Some(w.clone()),
+        // A lexed single-quoted body can never itself contain a `'` (the
+        // lexer treats any `'` as the closing quote), so wrapping it back
+        // in quotes always round-trips.
+        Token::SingleQuoted(s) => Some(format!("'{}'", s)),
+        // The first lexer pass already un-escaped `\"`/`\\` inside the
+        // body, so re-escape them here to find the same end boundary
+        // (rather than stopping at an embedded quote) on the next pass.
+        Token::DoubleQuoted(s) => {
+            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+            Some(format!("\"{}\"", escaped))
+        }
+        _ => None,
+    }
+}
+
+fn is_assignment(word: &str) -> bool {
+    if let Some((name, _)) = word.split_once('=') {
+        !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic() || c == '_')
+                .unwrap_or(false)
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    } else {
+        false
+    }
+}
