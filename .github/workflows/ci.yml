@@ -51,8 +51,16 @@ jobs:
       - name: Build (Debug)
         run: cargo build --verbose
 
+    
       - name: Build (Release)
         run: cargo build --release --verbose
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mitos-shell-binary
+          path: target/release/mitos-shell
+          retention-days: 7
 
       - name: Run tests
         run: cargo test --verbose
