@@ -11,7 +11,6 @@ pub enum ShellError {
     #[error("System error: {0}")]
     Nix(#[from] nix::Error),
     #[error("Command not found: {0}")]
-    #[allow(dead_code)] // reserved for a future pre-exec PATH lookup; not yet raised
     NotFound(String),
 }
 

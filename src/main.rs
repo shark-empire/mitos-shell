@@ -12,9 +12,9 @@ mod terminal;
 mod util;
 
 use execution::executor::Executor;
-use lexer::lexer::Lexer;
+use lexer::Lexer;
 use nix::sys::signal::{signal, SigHandler, Signal};
-use parser::parser::Parser;
+use parser::Parser;
 use shell::session::Session;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
