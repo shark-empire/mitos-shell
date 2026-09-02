@@ -4,6 +4,14 @@ on:
   push:
     branches: [ "main", "master" ]
   pull_request:
+  # Allows you to manually trigger the workflow with a debug option
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: 'Enable SSH debugging (tmate)'
+        required: false
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,44 +26,45 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Installs system libraries required by your project.
-      # libcrypt-dev is required because your build.rs links against the C `crypt` library
-      # for the `lala` privilege manager.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libcrypt-dev
 
-      # Installs the latest stable Rust toolchain with rustfmt and clippy components.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      # Caches Cargo dependencies and build artifacts to speed up future runs.
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
-      # 1. FORMAT: Ensures all code follows standard Rust style guidelines.
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # 2. LINT: Runs Clippy to catch common mistakes and improve code quality.
-      # The `-D warnings` flag treats all warnings as errors, enforcing strict code quality.
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # 3. CHECK: Fast compilation check without producing binaries.
       - name: Cargo Check
         run: cargo check --all-targets --all-features
 
-      # 4. BUILD: Compiles the project in both debug and release modes.
       - name: Build (Debug)
         run: cargo build --verbose
 
       - name: Build (Release)
         run: cargo build --release --verbose
 
-      # 5. TEST: Runs all unit and integration tests.
       - name: Run tests
         run: cargo test --verbose
+
+      # ============================================
+      # TMATE SSH DEBUGGING STEP
+      # ============================================
+      # This step pauses the workflow and gives you an SSH connection
+      # string. Connect from iSH on your iPhone using that string.
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled == 'true' }}
+        timeout-minutes: 60
+        with:
+          limit-access-to-actor: true
