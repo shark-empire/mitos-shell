@@ -1,0 +1,54 @@
+[Unit]
+Description=MITOS Primary Interactive Shell
+Documentation=https://github.com/shark-empire/mitos-shell
+
+# Ensure essential background services are spawned before the shell.
+# (Update these names to match your actual service files)
+After=mitos-logger.service
+After=mitos-network.service
+
+# Stronger dependency: Wait for these services to actually report READY=1
+# before starting the shell, ensuring the system is fully prepared.
+X-AfterReady=mitos-logger.service
+
+[Service]
+# --- Execution ---
+# The absolute path to your compiled shell binary.
+ExecStart=/bin/mitos-shell
+
+# --- Restart Policy ---
+# If the shell crashes (segfault, panic, non-zero exit), restart it.
+# If the user types 'exit' (exit code 0), it will not restart.
+Restart=on-failure
+
+# --- MITOS Session Lifecycle ---
+# X-Critical=true is the most important flag for a primary shell.
+# It tells mitos-services: "When this process exits, the user session 
+# is over." The system will automatically begin a graceful shutdown.
+# Note: When X-Critical is true, the Restart= policy is ignored.
+X-Critical=true
+
+# --- Resource Isolation ---
+# Prevents a rogue script or memory leak in the shell from causing 
+# a kernel OOM (Out of Memory) panic. Adjust based on your hardware.
+MemoryMax=512M
+
+# --- Environment Setup ---
+# Service managers spawn processes with a blank environment. 
+# You must explicitly pass what the shell needs to function.
+Environment=TERM=linux
+Environment=HOME=/root
+Environment=USER=root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=SHELL=/bin/mitos-shell
+
+# --- Privilege ---
+# By default, services run as root. If your shell handles privilege 
+# dropping internally (or via your 'lala' binary), you can leave this.
+# User=root
+# Group=root
+
+[Install]
+# Included for standard compatibility. MITOS currently uses a flat 
+# service list and doesn't strictly use targets yet.
+WantedBy=multi-user.target
