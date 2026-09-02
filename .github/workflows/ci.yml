@@ -51,25 +51,24 @@ jobs:
       - name: Build (Debug)
         run: cargo build --verbose
 
-    
       - name: Build (Release)
         run: cargo build --release --verbose
 
-      - name: Upload binary artifact
+      # ============================================
+      # UPDATED: Upload BOTH binaries
+      # ============================================
+      - name: Upload binary artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mitos-shell-binary
-          path: target/release/mitos-shell
+          name: mitos-binaries  # Changed name to plural
+          path: |
+            target/release/mitos-shell
+            target/release/lala
           retention-days: 7
 
       - name: Run tests
         run: cargo test --verbose
 
-      # ============================================
-      # TMATE SSH DEBUGGING STEP
-      # ============================================
-      # This step pauses the workflow and gives you an SSH connection
-      # string. Connect from iSH on your iPhone using that string.
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled == 'true' }}
