@@ -25,8 +25,8 @@ impl Completer for MitosCompleter {
         }
 
         // Command completion: first word on the line
-        let is_first_word = !line[..start].trim().contains(' ')
-            || line[..start].trim().ends_with([';', '|']);
+        let is_first_word =
+            !line[..start].trim().contains(' ') || line[..start].trim().ends_with([';', '|']);
         if is_first_word {
             let mut candidates = complete_commands(&word);
             candidates.extend(complete_files(&word));
