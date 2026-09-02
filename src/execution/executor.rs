@@ -508,11 +508,8 @@ impl Executor {
                                     let _ = close(fd);
                                 }
                                 Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
-                                    let path = format!(
-                                        "/tmp/mitos_heredoc_{}_{}",
-                                        std::process::id(),
-                                        i
-                                    );
+                                    let path =
+                                        format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
                                     let _ = fs::write(&path, s);
                                     let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
                                     dup2(fd, 0)?;
