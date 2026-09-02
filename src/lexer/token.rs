@@ -20,7 +20,5 @@ pub enum Token {
     HereDocStart(bool),
     HereString, // <<<
     ArrayAssign(String),
-    #[allow(dead_code)]
-    // reserved for parser lookahead; the Lexer iterator currently signals end via None
     Eof,
 }
