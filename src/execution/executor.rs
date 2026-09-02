@@ -1,14 +1,15 @@
 use crate::builtins;
-use crate::error::Result;
+use crate::error::{Result, ShellError};
 use crate::execution::outcome::ExecOutcome;
 use crate::expansion::expander::Expander;
-use crate::lexer::lexer::Lexer;
 use crate::lexer::token::Token;
+use crate::lexer::Lexer;
 use crate::parser::ast::*;
-use crate::parser::parser::Parser;
+use crate::parser::Parser;
 use crate::process::job::{JobStatus, JobTable};
+use crate::process::job_control::JobControl;
 use crate::terminal::tty::TtyManager;
-use crate::util::set_var;
+use crate::util::{command_exists, set_var};
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::read as nix_read;
@@ -239,6 +240,20 @@ impl Executor {
             }
         }
 
+        // Validate every stage up front: forking only to watch execvp fail
+        // wastes a process, and for a multi-stage pipeline it would leave
+        // the other stages running against a broken pipe.
+        for cmd in &expanded_commands {
+            if let Some(name) = cmd.args.first() {
+                if !command_exists(name) {
+                    let error = ShellError::NotFound(name.clone());
+                    eprintln!("mitos: {}", error);
+                    self.last_status = 127;
+                    return Ok(ExecOutcome::Status(127));
+                }
+            }
+        }
+
         let status = self.fork_pipeline(&expanded_commands)?;
 
         if status != 0 && self.options.errexit {
@@ -359,6 +374,53 @@ impl Executor {
     }
 
     fn exec_background(&mut self, inner: &Node) -> Result<ExecOutcome> {
+        // Fast path: a single external command with no redirects or
+        // assignments can be spawned directly via JobControl, which puts it
+        // in its own process group. `jobs`/`fg`/`bg` signal a job by calling
+        // killpg on its pgid, so without this every backgrounded command
+        // would stay in the shell's own group and those builtins would
+        // target the wrong process (or the whole shell). Anything else —
+        // compound commands, builtins, functions, or redirects — still
+        // goes through the general recursive fork below, since JobControl
+        // only knows how to execvp a flat argument list.
+        //
+        // Eligibility is checked against the *raw*, unexpanded command
+        // first: expansion can run command substitutions, and calling it
+        // here just to check eligibility — then again in the fallback
+        // path below — would run those substitutions twice.
+        if let Node::Pipeline(p) = inner {
+            if !p.negated && p.commands.len() == 1 {
+                let raw = &p.commands[0];
+                let looks_plain_external = raw.redirects.is_empty()
+                    && raw.assignments.is_empty()
+                    && raw
+                        .args
+                        .first()
+                        .map(|name| {
+                            !builtins::is_builtin(name) && !self.functions.contains_key(name)
+                        })
+                        .unwrap_or(false);
+
+                if looks_plain_external {
+                    let expanded = self.expand_command(raw)?;
+                    if !expanded.args.is_empty() {
+                        let child = JobControl::spawn_process(
+                            &expanded.args,
+                            Pid::from_raw(0),
+                            0,
+                            1,
+                            false,
+                        )?;
+                        let job_id = self.jobs.add(child, expanded.args.join(" "));
+                        println!("[{}] {}", job_id, child);
+                        return Ok(ExecOutcome::Status(0));
+                    }
+                    // Expansion produced no args (e.g. an unmatched glob) —
+                    // fall through to the general path below.
+                }
+            }
+        }
+
         let inner = inner.clone();
         match unsafe { fork()? } {
             ForkResult::Parent { child } => {
@@ -401,66 +463,84 @@ impl Executor {
             match unsafe { fork()? } {
                 ForkResult::Parent { child } => children.push(child),
                 ForkResult::Child => {
-                    if i > 0 {
-                        dup2(pipes[i - 1].0, 0)?;
-                    }
-                    if i < n - 1 {
-                        dup2(pipes[i].1, 1)?;
-                    }
-                    for (r, w) in &pipes {
-                        let _ = close(*r);
-                        let _ = close(*w);
-                    }
+                    // Wrapping the setup logic in a closure lets `?` stay
+                    // ergonomic below while guaranteeing every path exits
+                    // directly: a forked child must never return through
+                    // the caller's control flow, since (being a copy of
+                    // the same process) that would resume the parent
+                    // shell's own REPL as a duplicate process instead of
+                    // terminating.
+                    let run = || -> Result<()> {
+                        if i > 0 {
+                            dup2(pipes[i - 1].0, 0)?;
+                        }
+                        if i < n - 1 {
+                            dup2(pipes[i].1, 1)?;
+                        }
+                        for (r, w) in &pipes {
+                            let _ = close(*r);
+                            let _ = close(*w);
+                        }
 
-                    for redir in &cmd.redirects {
-                        match redir {
-                            Redirect::Input(p) => {
-                                let fd = open(p.as_str(), OFlag::O_RDONLY, Mode::empty())?;
-                                dup2(fd, 0)?;
-                                let _ = close(fd);
-                            }
-                            Redirect::Output(p) => {
-                                let fd = open(
-                                    p.as_str(),
-                                    OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
-                                    Mode::from_bits(0o644).unwrap(),
-                                )?;
-                                dup2(fd, 1)?;
-                                let _ = close(fd);
-                            }
-                            Redirect::Append(p) => {
-                                let fd = open(
-                                    p.as_str(),
-                                    OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
-                                    Mode::from_bits(0o644).unwrap(),
-                                )?;
-                                dup2(fd, 1)?;
-                                let _ = close(fd);
-                            }
-                            Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
-                                let path =
-                                    format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
-                                let _ = fs::write(&path, s);
-                                let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
-                                dup2(fd, 0)?;
-                                let _ = close(fd);
-                                let _ = fs::remove_file(path);
+                        for redir in &cmd.redirects {
+                            match redir {
+                                Redirect::Input(p) => {
+                                    let fd = open(p.as_str(), OFlag::O_RDONLY, Mode::empty())?;
+                                    dup2(fd, 0)?;
+                                    let _ = close(fd);
+                                }
+                                Redirect::Output(p) => {
+                                    let fd = open(
+                                        p.as_str(),
+                                        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_TRUNC,
+                                        Mode::from_bits(0o644).unwrap(),
+                                    )?;
+                                    dup2(fd, 1)?;
+                                    let _ = close(fd);
+                                }
+                                Redirect::Append(p) => {
+                                    let fd = open(
+                                        p.as_str(),
+                                        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_APPEND,
+                                        Mode::from_bits(0o644).unwrap(),
+                                    )?;
+                                    dup2(fd, 1)?;
+                                    let _ = close(fd);
+                                }
+                                Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
+                                    let path = format!(
+                                        "/tmp/mitos_heredoc_{}_{}",
+                                        std::process::id(),
+                                        i
+                                    );
+                                    let _ = fs::write(&path, s);
+                                    let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
+                                    dup2(fd, 0)?;
+                                    let _ = close(fd);
+                                    let _ = fs::remove_file(path);
+                                }
                             }
                         }
-                    }
 
-                    for assignment in &cmd.assignments {
-                        if let Assignment::Scalar(k, v) = assignment {
-                            set_var(k, v);
+                        for assignment in &cmd.assignments {
+                            if let Assignment::Scalar(k, v) = assignment {
+                                set_var(k, v);
+                            }
                         }
-                    }
 
-                    let c_args: Vec<CString> = cmd
-                        .args
-                        .iter()
-                        .map(|s| CString::new(s.as_str()).unwrap())
-                        .collect();
-                    let _ = nix::unistd::execvp(&c_args[0], &c_args);
+                        let c_args: Vec<CString> = cmd
+                            .args
+                            .iter()
+                            .map(|s| CString::new(s.as_str()).unwrap())
+                            .collect();
+                        let _ = nix::unistd::execvp(&c_args[0], &c_args);
+                        Ok(())
+                    };
+
+                    if let Err(error) = run() {
+                        eprintln!("mitos: {}: {}", cmd.args[0], error);
+                        std::process::exit(126);
+                    }
                     eprintln!("mitos: command not found: {}", cmd.args[0]);
                     std::process::exit(127);
                 }
@@ -496,14 +576,25 @@ impl Executor {
             match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
                 Ok(WaitStatus::StillAlive) | Err(_) => break,
                 Ok(WaitStatus::Exited(pid, code)) => {
-                    self.jobs.update_status(pid, JobStatus::Exited(code));
+                    self.report_job_done(pid, JobStatus::Exited(code));
                 }
                 Ok(WaitStatus::Signaled(pid, sig, _)) => {
-                    self.jobs.update_status(pid, JobStatus::Signaled(sig));
+                    self.report_job_done(pid, JobStatus::Signaled(sig));
                 }
                 Ok(_) => continue,
             }
         }
+    }
+
+    /// Marks a reaped background job as finished, prints a completion
+    /// notice (matching common shell behavior for `jobs`), and drops it
+    /// from the table.
+    fn report_job_done(&mut self, pid: Pid, status: JobStatus) {
+        if let Some(job) = self.jobs.jobs.iter().find(|j| j.pgid == pid) {
+            println!("[{}]+  Done                    {}", job.id, job.command);
+        }
+        self.jobs.update_status(pid, status);
+        self.jobs.cleanup_finished();
     }
 
     fn expand_command(&self, command: &SimpleCommand) -> Result<SimpleCommand> {
@@ -585,9 +676,19 @@ impl Executor {
                     expanded.redirects.push(Redirect::HereString(expanded_s));
                 }
                 Redirect::HereDoc(body, strip, expand) => {
+                    // Heredoc bodies aren't shell words (no quote syntax to
+                    // respect), so they get the same variable/command/
+                    // arithmetic expansion as a double-quoted string, minus
+                    // glob/word-splitting — unless the delimiter requested
+                    // no expansion at all (`<<'EOF'`).
+                    let expanded_body = if *expand {
+                        expander.expand_string(body)?
+                    } else {
+                        body.clone()
+                    };
                     expanded
                         .redirects
-                        .push(Redirect::HereDoc(body.clone(), *strip, *expand));
+                        .push(Redirect::HereDoc(expanded_body, *strip, *expand));
                 }
             }
         }
