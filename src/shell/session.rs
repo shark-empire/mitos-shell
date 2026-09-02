@@ -1,9 +1,10 @@
+use crate::builtins::alias;
 use crate::completion::helper::MitosHelper;
 use crate::config::startup;
 use crate::execution::executor::Executor;
 use crate::execution::outcome::ExecOutcome;
-use crate::lexer::lexer::Lexer;
-use crate::parser::parser::Parser;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 use rustyline::history::DefaultHistory;
 use rustyline::Editor;
 
@@ -72,8 +73,8 @@ impl Session {
     }
 
     fn execute_line(&mut self, line: &str) -> Option<i32> {
-        // Line-level pre-expansion: aliases, command substitution, arithmetic.
-        let expanded = crate::expansion::pipeline::expand_line(line);
+        // Expand aliases before parsing.
+        let expanded = alias::expand(line);
 
         let tokens: Vec<_> = Lexer::new(&expanded).collect();
 
