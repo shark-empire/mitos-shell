@@ -74,15 +74,17 @@ fn extract_backtick_substitution(chars: &[char], start: usize) -> Option<(String
 
 /// Runs a command in a subshell and captures stdout, stripping trailing newlines.
 fn run_capture(command: &str) -> String {
-    // Command substitution uses the shell's PATH. For a single token we can
-    // invoke directly; for compound commands we'd delegate to `sh -c`.
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.is_empty() {
+    if command.trim().is_empty() {
         return String::new();
     }
 
-    let output = Command::new(parts[0])
-        .args(&parts[1..])
+    // Delegate to `sh -c` rather than naively splitting on whitespace and
+    // exec'ing the first word: that would mishandle quoted arguments,
+    // couldn't run pipelines/redirects inside the substitution, and
+    // wouldn't expand `$VAR` references in the substituted text.
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();

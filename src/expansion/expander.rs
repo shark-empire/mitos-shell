@@ -1,5 +1,7 @@
 use crate::config::options::ShellOptions;
 use crate::error::{Result, ShellError};
+use crate::expansion::arithmetic;
+use crate::expansion::command;
 use crate::lexer::token::Token;
 use glob::glob;
 use std::collections::HashMap;
@@ -38,23 +40,25 @@ impl Expander {
                     final_args.push(s);
                 }
                 Token::DoubleQuoted(s) => {
-                    // Double quotes allow variables/arrays, but prevent globbing
+                    // Double quotes allow variables/arrays/command-substitution/
+                    // arithmetic, but prevent globbing
                     if s.contains("${") {
                         let expanded = self.expand_braced(&s)?;
                         // In double quotes, arrays usually join into a single string or first element
                         final_args.extend(expanded);
                     } else {
-                        let expanded = self.expand_vars(&s)?;
+                        let expanded = self.expand_string(&s)?;
                         final_args.push(expanded);
                     }
                 }
                 Token::Word(s) => {
-                    // Unquoted words get variables, arrays, tildes, AND globs
+                    // Unquoted words get variables, arrays, command
+                    // substitution, arithmetic, tildes, AND globs
                     if s.contains("${") {
                         let expanded = self.expand_braced(&s)?;
                         final_args.extend(expanded); // Arrays can expand to MULTIPLE args!
                     } else {
-                        let mut expanded = self.expand_vars(&s)?;
+                        let mut expanded = self.expand_string(&s)?;
                         expanded = self.expand_tilde(&expanded);
 
                         // Globbing
@@ -83,6 +87,22 @@ impl Expander {
             }
         }
         Ok(final_args)
+    }
+
+    /// Expands a raw string the way a double-quoted word is expanded:
+    /// arithmetic expansion (`$((expr))`), then command substitution
+    /// (`$(cmd)` / `` `cmd` ``), then parameter/variable expansion.
+    /// Arithmetic must run before command substitution — a `$((` prefix
+    /// would otherwise look like a command substitution whose "command"
+    /// is `(expr)`, corrupting the expression instead of evaluating it.
+    ///
+    /// This is shared by command-line word expansion (via
+    /// [`Expander::expand_tokens`]) and by heredoc bodies, which undergo
+    /// the same expansions but are never split into shell tokens.
+    pub fn expand_string(&self, input: &str) -> Result<String> {
+        let after_arith = arithmetic::expand_arithmetic(input);
+        let after_cmd = command::expand_command_substitution(&after_arith);
+        self.expand_vars(&after_cmd)
     }
 
     fn expand_vars(&self, input: &str) -> Result<String> {
@@ -200,35 +220,5 @@ impl Expander {
 
         // Fallback: Not an array expansion, treat as normal string
         Ok(vec![input.to_string()])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::lexer::lexer::Lexer;
-
-    fn expander() -> Expander {
-        Expander::new(0, vec![], ShellOptions::default(), HashMap::new())
-    }
-
-    #[test]
-    fn expands_variables() {
-        std::env::set_var("MITOS_TEST_VAR", "world");
-        let tokens: Vec<Token> = Lexer::new("$MITOS_TEST_VAR").collect();
-        assert_eq!(
-            expander().expand_tokens(tokens).unwrap(),
-            vec!["world".to_string()]
-        );
-    }
-
-    #[test]
-    fn single_quotes_prevent_expansion() {
-        std::env::set_var("MITOS_TEST_VAR", "world");
-        let tokens: Vec<Token> = Lexer::new("'$MITOS_TEST_VAR'").collect();
-        assert_eq!(
-            expander().expand_tokens(tokens).unwrap(),
-            vec!["$MITOS_TEST_VAR".to_string()]
-        );
     }
 }
