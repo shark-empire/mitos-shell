@@ -1,10 +1,3 @@
-// Reserved: a single-command spawn helper with proper POSIX process-group
-// setup (setpgid), intended to back real job control (fg/bg/Ctrl-Z).
-// `Executor::fork_pipeline` currently does its own inline forking for
-// multi-command pipelines (redirects, heredocs, N-way pipe wiring) and does
-// not yet delegate to this; wiring the two together is a larger follow-up.
-#![allow(dead_code)]
-
 use crate::error::Result;
 use nix::unistd::{close, dup2, execvp, fork, setpgid, ForkResult, Pid};
 use std::ffi::CString;
@@ -45,14 +38,19 @@ impl JobControl {
                 };
                 let _ = setpgid(nix::unistd::getpid(), pgrp);
 
-                // Wire up standard streams
+                // Wire up standard streams. Failures here are intentionally
+                // ignored rather than propagated with `?`: a forked child
+                // must never return through the caller's control flow, since
+                // (being a copy of the same process) that would resume the
+                // parent shell's own REPL as a duplicate process instead of
+                // terminating. Every path below ends in `exit`.
                 if stdin != 0 {
-                    dup2(stdin, 0)?;
-                    close(stdin)?;
+                    let _ = dup2(stdin, 0);
+                    let _ = close(stdin);
                 }
                 if stdout != 1 {
-                    dup2(stdout, 1)?;
-                    close(stdout)?;
+                    let _ = dup2(stdout, 1);
+                    let _ = close(stdout);
                 }
 
                 // Convert Rust Strings to CStrings for execvp
@@ -61,9 +59,17 @@ impl JobControl {
                     .map(|s| CString::new(s.as_str()).unwrap())
                     .collect();
 
-                // Replace child process image with the target executable
-                execvp(&c_args[0], &c_args)?;
-                unreachable!();
+                // Replace child process image with the target executable.
+                // execvp only returns on failure, so reaching the lines
+                // below always means the command could not be run.
+                if !c_args.is_empty() {
+                    let _ = execvp(&c_args[0], &c_args);
+                }
+                eprintln!(
+                    "mitos: command not found: {}",
+                    args.first().map(String::as_str).unwrap_or("")
+                );
+                std::process::exit(127);
             }
         }
     }
