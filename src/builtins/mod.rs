@@ -65,9 +65,6 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
                 };
                 println!("[{}]  {}  {}", job.id, state, job.command);
             }
-            // Finished jobs are shown once as "Done", then pruned so they
-            // don't linger in subsequent `jobs` listings.
-            executor.jobs.cleanup_finished();
             Some(ExecOutcome::Status(0))
         }
         "fg" => {
@@ -164,13 +161,43 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
             }
         }
 
-        "trap" => Some(ExecOutcome::Status(trap::execute(
-            args,
-            &mut executor.traps,
-        ))),
+        // Signal handling.
+        "trap" => Some(ExecOutcome::Status(trap::execute(args, &mut executor.traps))),
 
         _ => None, // Not a builtin, fallback to external execution
     }
+}
+
+/// Names handled directly above, without going through external-process
+/// execution. Used by [`crate::execution::executor::Executor`] to decide
+/// when a backgrounded command can safely bypass the recursive AST
+/// executor and be spawned directly (builtins mutate shell state — `cd`,
+/// `export`, etc. — and mostly have no standalone binary to `execvp`).
+pub fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "break"
+            | "continue"
+            | "return"
+            | "exit"
+            | "set"
+            | "true"
+            | ":"
+            | "false"
+            | "echo"
+            | "read"
+            | "cd"
+            | "pwd"
+            | "export"
+            | "test"
+            | "["
+            | "jobs"
+            | "fg"
+            | "bg"
+            | "alias"
+            | "unalias"
+            | "trap"
+    )
 }
 
 fn builtin_echo(args: &[String]) -> i32 {
