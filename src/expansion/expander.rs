@@ -102,8 +102,7 @@ impl Expander {
 
                             if should_glob {
                                 if let Ok(paths) = glob(&field) {
-                                    let matches: Vec<_> =
-                                        paths.filter_map(|p| p.ok()).collect();
+                                    let matches: Vec<_> = paths.filter_map(|p| p.ok()).collect();
                                     if matches.is_empty() {
                                         final_args.push(field);
                                     } else {
