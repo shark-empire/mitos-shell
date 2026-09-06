@@ -131,12 +131,53 @@ impl Iterator for Lexer {
             _ => {
                 let mut word = String::new();
                 word.push(ch);
+
+                // Track quote state while accumulating so that whitespace
+                // and operator characters *inside* a quoted region (e.g.
+                // the space in `FOO="bar baz"`, or the `;` in `echo
+                // "a;b"`) don't end the word early — only a matching
+                // close-quote does. A quote that starts the word itself
+                // never reaches this branch (see the '\'' and '"' arms
+                // above); this only handles one appearing after some
+                // other character has already begun the word. Escapes
+                // and quote-removal aren't resolved here — the raw text
+                // (backslashes and quote marks included) is kept as-is
+                // and handled later during expansion, so re-lexing this
+                // token's text on the second pass reproduces the same
+                // quote regions.
+                let mut in_single = false;
+                let mut in_double = false;
+
                 while let Some(c) = self.peek() {
-                    if c.is_whitespace() || "|&;<>(){}!\n".contains(c) {
-                        break;
+                    if in_single {
+                        word.push(c);
+                        self.advance();
+                        if c == '\'' {
+                            in_single = false;
+                        }
+                    } else if in_double {
+                        word.push(c);
+                        self.advance();
+                        if c == '\\' {
+                            if let Some(escaped) = self.peek() {
+                                word.push(escaped);
+                                self.advance();
+                            }
+                        } else if c == '"' {
+                            in_double = false;
+                        }
+                    } else {
+                        if c.is_whitespace() || "|&;<>(){}!\n".contains(c) {
+                            break;
+                        }
+                        word.push(c);
+                        self.advance();
+                        if c == '\'' {
+                            in_single = true;
+                        } else if c == '"' {
+                            in_double = true;
+                        }
                     }
-                    word.push(c);
-                    self.advance();
                 }
 
                 // Array detection: if word ends with '=' and next non-whitespace is '('
