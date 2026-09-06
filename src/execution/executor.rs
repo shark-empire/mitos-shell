@@ -28,6 +28,22 @@ pub struct Executor {
     pub options: crate::config::options::ShellOptions,
     pub traps: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
+    /// Set on the child's own copy of the Executor when it's running as
+    /// (or a descendant of) a backgrounded job — e.g. inside `cmd &`'s
+    /// forked child. `fork_pipeline` checks this before doing terminal
+    /// handoff, so a backgrounded compound pipeline doesn't try to steal
+    /// the controlling terminal from whatever the shell is running in
+    /// the foreground.
+    in_background: bool,
+    /// Shell (local) variables: set by a plain assignment, visible to
+    /// this shell and its variable expansions, but — unlike everything
+    /// currently going through `set_var`/`std::env::set_var` — NOT
+    /// automatically part of the environment handed to child processes.
+    locals: HashMap<String, String>,
+    /// Names that `export` (or `export NAME=value`) has promoted from
+    /// `locals` into the real process environment, so child processes
+    /// inherit them.
+    pub exported: std::collections::HashSet<String>,
 }
 
 impl Executor {
@@ -41,6 +57,9 @@ impl Executor {
             options: crate::config::options::ShellOptions::default(),
             traps: HashMap::new(),
             arrays: HashMap::new(),
+            in_background: false,
+            locals: HashMap::new(),
+            exported: std::collections::HashSet::new(),
         }
     }
 
@@ -59,6 +78,43 @@ impl Executor {
             .last()
             .map(|values| values.as_slice())
             .unwrap_or(&[])
+    }
+
+    /// Sets a shell (local) variable. Unlike a raw `export`, this does
+    /// NOT by itself put the name in the process environment — child
+    /// processes won't inherit it — unless it was already exported
+    /// earlier, in which case that promotion is preserved (POSIX: once
+    /// exported, later plain assignments to the same name stay
+    /// exported) and the mirrored environment variable is kept in sync.
+    pub fn set_variable(&mut self, key: &str, value: &str) {
+        self.locals.insert(key.to_string(), value.to_string());
+        if self.exported.contains(key) {
+            set_var(key, value);
+        }
+    }
+
+    /// Promotes a variable into the process environment so child
+    /// processes inherit it. If it has no value yet, it's exported as
+    /// an empty string (matching `export FOO` with no value).
+    pub fn export_variable(&mut self, key: &str) {
+        // Falls back through to the real environment (not just
+        // `locals`) so re-exporting a variable that was only ever
+        // inherited — `export PATH` when PATH was never touched by a
+        // plain assignment in this session — preserves its current
+        // value instead of wiping it to empty.
+        let value = self.get_variable(key).unwrap_or_default();
+        self.exported.insert(key.to_string());
+        set_var(key, value);
+    }
+
+    /// Looks up a shell variable: local variables first, then the real
+    /// process environment (covers inherited variables like `PATH` and
+    /// anything already exported).
+    pub fn get_variable(&self, key: &str) -> Option<String> {
+        self.locals
+            .get(key)
+            .cloned()
+            .or_else(|| std::env::var(key).ok())
     }
 
     pub fn last_status(&self) -> i32 {
@@ -120,18 +176,8 @@ impl Executor {
     }
 
     fn exec_node(&mut self, node: &Node) -> Result<ExecOutcome> {
-        if crate::INTERRUPTED.load(std::sync::atomic::Ordering::SeqCst) {
-            crate::INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
-
-            if let Some(cmd) = self.traps.get("INT").cloned() {
-                let tokens: Vec<_> = Lexer::new(&cmd).collect();
-                if let Ok(ast) = Parser::new(tokens).parse() {
-                    let _ = self.execute(ast);
-                }
-            } else {
-                eprintln!();
-                return Ok(ExecOutcome::Exit(130));
-            }
+        if let Some(outcome) = self.check_pending_signal() {
+            return Ok(outcome);
         }
 
         match node {
@@ -203,7 +249,7 @@ impl Executor {
             if first.args.is_empty() {
                 for assignment in &first.assignments {
                     match assignment {
-                        Assignment::Scalar(k, v) => set_var(k, v),
+                        Assignment::Scalar(k, v) => self.set_variable(k, v),
                         Assignment::Array(name, elements) => {
                             self.arrays.insert(name.clone(), elements.clone());
                         }
@@ -306,17 +352,18 @@ impl Executor {
             self.current_args().to_vec(),
             self.options.clone(),
             self.arrays.clone(),
+            self.locals.clone(),
         );
 
         let mut words = Vec::new();
         for w in &c.words {
             let tokens: Vec<Token> = Lexer::new(w).collect();
-            words.extend(expander.expand_tokens(tokens)?);
+            words.extend(expander.expand_tokens(tokens, true)?);
         }
 
         let mut status = 0;
         for word in words {
-            set_var(&c.var, &word);
+            self.set_variable(&c.var, &word);
             match self.exec_node(&c.body)? {
                 ExecOutcome::Break => return Ok(ExecOutcome::Status(status)),
                 ExecOutcome::Continue => continue,
@@ -333,11 +380,12 @@ impl Executor {
             self.current_args().to_vec(),
             self.options.clone(),
             self.arrays.clone(),
+            self.locals.clone(),
         );
 
         let tokens: Vec<Token> = Lexer::new(&c.word).collect();
         let target = expander
-            .expand_tokens(tokens)?
+            .expand_tokens(tokens, false)?
             .into_iter()
             .next()
             .unwrap_or_default();
@@ -429,6 +477,7 @@ impl Executor {
                 Ok(ExecOutcome::Status(0))
             }
             ForkResult::Child => {
+                self.in_background = true;
                 let code = match self.exec_node(&inner) {
                     Ok(o) => o.status_or_zero(),
                     Err(_) => 1,
@@ -441,7 +490,7 @@ impl Executor {
     fn fork_pipeline(&mut self, commands: &[SimpleCommand]) -> Result<i32> {
         use nix::fcntl::{open, OFlag};
         use nix::sys::stat::Mode;
-        use nix::unistd::{close, dup2, pipe};
+        use nix::unistd::{close, dup2, pipe, setpgid};
         use std::ffi::CString;
 
         let n = commands.len();
@@ -454,6 +503,12 @@ impl Executor {
         }
 
         let mut children = Vec::new();
+        // The whole pipeline runs in one new process group, led by its
+        // first process. Without this, every stage stays in the shell's
+        // own group, and `jobs`/`fg`/`bg` (which signal a job by calling
+        // killpg on its pgid) or a Ctrl-Z from the terminal can't target
+        // this pipeline specifically.
+        let mut pgid: Option<Pid> = None;
 
         for (i, cmd) in commands.iter().enumerate() {
             if cmd.args.is_empty() {
@@ -461,8 +516,21 @@ impl Executor {
             }
 
             match unsafe { fork()? } {
-                ForkResult::Parent { child } => children.push(child),
+                ForkResult::Parent { child } => {
+                    let group = *pgid.get_or_insert(child);
+                    let _ = setpgid(child, group);
+                    children.push(child);
+                }
                 ForkResult::Child => {
+                    // Join (or found) the pipeline's process group here
+                    // too. Both parent and child call setpgid — the
+                    // classic double-setpgid pattern — so there's no race
+                    // between the parent handing the terminal to this
+                    // group and the child actually having joined it yet.
+                    let this_pid = nix::unistd::getpid();
+                    let group = pgid.unwrap_or(this_pid);
+                    let _ = setpgid(this_pid, group);
+
                     // Wrapping the setup logic in a closure lets `?` stay
                     // ergonomic below while guaranteeing every path exits
                     // directly: a forked child must never return through
@@ -508,8 +576,11 @@ impl Executor {
                                     let _ = close(fd);
                                 }
                                 Redirect::HereString(s) | Redirect::HereDoc(s, _, _) => {
-                                    let path =
-                                        format!("/tmp/mitos_heredoc_{}_{}", std::process::id(), i);
+                                    let path = format!(
+                                        "/tmp/mitos_heredoc_{}_{}",
+                                        std::process::id(),
+                                        i
+                                    );
                                     let _ = fs::write(&path, s);
                                     let fd = open(path.as_str(), OFlag::O_RDONLY, Mode::empty())?;
                                     dup2(fd, 0)?;
@@ -519,6 +590,12 @@ impl Executor {
                             }
                         }
 
+                        // Command-prefix assignments (`FOO=bar cmd`) are
+                        // exported to just this one child's environment
+                        // per POSIX — unlike a plain `FOO=bar` statement,
+                        // they don't become a persistent shell variable,
+                        // so this intentionally stays a raw env set
+                        // rather than `self.set_variable`.
                         for assignment in &cmd.assignments {
                             if let Assignment::Scalar(k, v) = assignment {
                                 set_var(k, v);
@@ -549,14 +626,57 @@ impl Executor {
             let _ = close(w);
         }
 
+        let group = match pgid {
+            Some(g) => g,
+            // Nothing was actually forked (e.g. every stage had empty args).
+            None => return Ok(0),
+        };
+
+        // Give the pipeline's process group the controlling terminal
+        // while it runs, so it can read from the terminal and receive a
+        // Ctrl-C/Ctrl-Z directly from the kernel's TTY line discipline —
+        // but only when this pipeline genuinely is the foreground job. A
+        // pipeline running inside an already-backgrounded job (see
+        // `Executor::in_background`) must not steal the terminal from
+        // whatever the shell's real foreground job is.
+        let foreground = !self.in_background;
+        if let (true, Some(tty)) = (foreground, &self.tty) {
+            tty.give_terminal_to(group);
+        }
+
         let mut last = 0;
-        for child in children {
-            match waitpid(child, None)? {
+        let mut stopped = false;
+        for child in &children {
+            match waitpid(*child, Some(WaitPidFlag::WUNTRACED))? {
                 WaitStatus::Exited(_, s) => last = s,
                 WaitStatus::Signaled(_, sig, _) => last = 128 + sig as i32,
+                WaitStatus::Stopped(_, sig) => {
+                    stopped = true;
+                    last = 128 + sig as i32;
+                }
                 _ => {}
             }
         }
+
+        if let (true, Some(tty)) = (foreground, &self.tty) {
+            tty.take_terminal_back();
+        }
+
+        if stopped {
+            // Ctrl-Z (or an explicit SIGTSTP) stopped the pipeline:
+            // register it as a job so `jobs`/`fg`/`bg` can find and
+            // resume it, instead of just losing track of it here.
+            let description = commands
+                .iter()
+                .filter(|c| !c.args.is_empty())
+                .map(|c| c.args.join(" "))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let job_id = self.jobs.add(group, description.clone());
+            self.jobs.update_status(group, JobStatus::Stopped);
+            println!("\n[{}] Stopped          {}", job_id, description);
+        }
+
         Ok(last)
     }
 
@@ -594,12 +714,63 @@ impl Executor {
         self.jobs.cleanup_finished();
     }
 
+    /// Checks the global signal flags set by the handlers installed in
+    /// `main.rs` and, for whichever fired since the last check, either
+    /// runs its registered `trap` command or applies the signal's
+    /// default action. Returns `Some` only when the default action
+    /// should end execution (a fatal signal with no trap registered);
+    /// running a trap only changes shell state, it doesn't by itself
+    /// stop the caller's normal execution.
+    fn check_pending_signal(&mut self) -> Option<ExecOutcome> {
+        let signals = [
+            (&crate::INTERRUPTED, "INT", 130),
+            (&crate::TERM_RECEIVED, "TERM", 143),
+            (&crate::HUP_RECEIVED, "HUP", 129),
+        ];
+
+        for (flag, name, default_exit_code) in signals {
+            if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                flag.store(false, std::sync::atomic::Ordering::SeqCst);
+
+                if let Some(cmd) = self.traps.get(name).cloned() {
+                    let tokens: Vec<_> = Lexer::new(&cmd).collect();
+                    if let Ok(ast) = Parser::new(tokens).parse() {
+                        let _ = self.execute(ast);
+                    }
+                } else {
+                    if name == "INT" {
+                        eprintln!();
+                    }
+                    return Some(ExecOutcome::Exit(default_exit_code));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Runs the registered `trap ... EXIT` command, if any. EXIT isn't a
+    /// real signal the OS delivers — it's a shell convention for "about
+    /// to exit" — so unlike INT/TERM/HUP this is called directly at
+    /// each place the shell actually terminates (explicit `exit`,
+    /// running off the end of a script, Ctrl-D at an interactive
+    /// prompt) rather than through a signal flag.
+    pub fn run_exit_trap(&mut self) {
+        if let Some(cmd) = self.traps.get("EXIT").cloned() {
+            let tokens: Vec<_> = Lexer::new(&cmd).collect();
+            if let Ok(ast) = Parser::new(tokens).parse() {
+                let _ = self.execute(ast);
+            }
+        }
+    }
+
     fn expand_command(&self, command: &SimpleCommand) -> Result<SimpleCommand> {
         let expander = Expander::new(
             self.last_status,
             self.current_args().to_vec(),
             self.options.clone(),
             self.arrays.clone(),
+            self.locals.clone(),
         );
 
         let mut expanded = command.clone();
@@ -609,7 +780,7 @@ impl Executor {
 
         for arg in &command.args {
             let tokens: Vec<Token> = Lexer::new(arg).collect();
-            expanded.args.extend(expander.expand_tokens(tokens)?);
+            expanded.args.extend(expander.expand_tokens(tokens, true)?);
         }
 
         for assignment in &command.assignments {
@@ -617,7 +788,7 @@ impl Executor {
                 Assignment::Scalar(key, value) => {
                     let tokens: Vec<Token> = Lexer::new(value).collect();
                     let expanded_value = expander
-                        .expand_tokens(tokens)?
+                        .expand_tokens(tokens, false)?
                         .into_iter()
                         .next()
                         .unwrap_or_default();
@@ -629,7 +800,7 @@ impl Executor {
                     let mut expanded_elements = Vec::new();
                     for e in elements {
                         let tokens: Vec<Token> = Lexer::new(e).collect();
-                        expanded_elements.extend(expander.expand_tokens(tokens)?);
+                        expanded_elements.extend(expander.expand_tokens(tokens, true)?);
                     }
                     expanded
                         .assignments
@@ -643,7 +814,7 @@ impl Executor {
                 Redirect::Input(path) => {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
                     let p = expander
-                        .expand_tokens(tokens)?
+                        .expand_tokens(tokens, false)?
                         .into_iter()
                         .next()
                         .unwrap_or_default();
@@ -652,7 +823,7 @@ impl Executor {
                 Redirect::Output(path) => {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
                     let p = expander
-                        .expand_tokens(tokens)?
+                        .expand_tokens(tokens, false)?
                         .into_iter()
                         .next()
                         .unwrap_or_default();
@@ -661,7 +832,7 @@ impl Executor {
                 Redirect::Append(path) => {
                     let tokens: Vec<Token> = Lexer::new(path).collect();
                     let p = expander
-                        .expand_tokens(tokens)?
+                        .expand_tokens(tokens, false)?
                         .into_iter()
                         .next()
                         .unwrap_or_default();
@@ -669,7 +840,7 @@ impl Executor {
                 }
                 Redirect::HereString(s) => {
                     let tokens: Vec<Token> = Lexer::new(s).collect();
-                    let expanded_s = expander.expand_tokens(tokens)?.join(" ");
+                    let expanded_s = expander.expand_tokens(tokens, false)?.join(" ");
                     expanded.redirects.push(Redirect::HereString(expanded_s));
                 }
                 Redirect::HereDoc(body, strip, expand) => {
@@ -826,14 +997,14 @@ impl Executor {
             }
 
             if vars.len() == 1 {
-                crate::util::set_var(&vars[0], &input);
+                self.set_variable(&vars[0], &input);
             } else {
                 let words: Vec<&str> = input.split_whitespace().collect();
                 for (idx, var) in vars.iter().enumerate() {
                     if idx == vars.len() - 1 {
-                        crate::util::set_var(var, words[idx..].join(" "));
+                        self.set_variable(var, &words[idx..].join(" "));
                     } else {
-                        crate::util::set_var(var, words.get(idx).unwrap_or(&""));
+                        self.set_variable(var, words.get(idx).copied().unwrap_or(""));
                     }
                 }
             }
