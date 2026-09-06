@@ -8,7 +8,6 @@ pub mod trap;
 use crate::execution::executor::Executor;
 use crate::execution::outcome::ExecOutcome;
 use crate::process::job::JobStatus;
-use crate::util::set_var;
 use nix::sys::signal::{killpg, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use std::io::{self, Write};
@@ -54,7 +53,7 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
                 Some(ExecOutcome::Status(1))
             }
         },
-        "export" => Some(ExecOutcome::Status(builtin_export(args))),
+        "export" => Some(ExecOutcome::Status(builtin_export(executor, args))),
         "test" | "[" => Some(ExecOutcome::Status(test::execute_test(args))),
         "jobs" => {
             for job in &executor.jobs.jobs {
@@ -162,10 +161,7 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
         }
 
         // Signal handling.
-        "trap" => Some(ExecOutcome::Status(trap::execute(
-            args,
-            &mut executor.traps,
-        ))),
+        "trap" => Some(ExecOutcome::Status(trap::execute(args, &mut executor.traps))),
 
         _ => None, // Not a builtin, fallback to external execution
     }
@@ -247,8 +243,12 @@ fn builtin_cd(args: &[String]) -> i32 {
     }
 }
 
-fn builtin_export(args: &[String]) -> i32 {
+fn builtin_export(executor: &mut Executor, args: &[String]) -> i32 {
     if args.len() == 1 {
+        // Matches `export` with no args in real shells: list every
+        // exported variable. The real process environment already
+        // reflects every exported name, since exporting mirrors the
+        // value there immediately.
         for (key, value) in std::env::vars() {
             println!("{}={}", key, value);
         }
@@ -263,10 +263,15 @@ fn builtin_export(args: &[String]) -> i32 {
                 return 1;
             }
 
-            set_var(key, value);
-        } else {
-            eprintln!("export: invalid assignment: {}", assignment);
+            executor.set_variable(key, value);
+            executor.export_variable(key);
+        } else if assignment.is_empty() {
+            eprintln!("export: empty variable name");
             return 1;
+        } else {
+            // `export NAME` with no value: promote an existing shell
+            // variable to exported, keeping its current value.
+            executor.export_variable(assignment);
         }
     }
 
