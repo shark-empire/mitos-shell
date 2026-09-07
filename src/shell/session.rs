@@ -68,6 +68,7 @@ impl Session {
         }
 
         let _ = self.rl.save_history(&history_path());
+        self.executor.run_exit_trap();
 
         exit_code
     }
