@@ -1,5 +1,5 @@
-use std::os::unix::fs::PermissionsExt;
 use mitos_utils::common::{paths, permissions, users};
+use std::os::unix::fs::PermissionsExt;
 
 // ────────────────────────── Environment Variables ──────────────────────────
 
@@ -61,7 +61,7 @@ pub fn expand_tilde(path: &str) -> std::path::PathBuf {
 pub fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
     // mitos-utils requires a `cwd` argument to resolve relative paths lexically
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-    paths::normalize(path, &cwd) 
+    paths::normalize(path, &cwd)
 }
 
 /// Formats Unix permissions (e.g., "drwxr-xr-x") using the exact same
@@ -70,12 +70,11 @@ pub fn format_permissions(mode: u32) -> String {
     permissions::format_permissions(mode) // Now works because we added it to mitos-utils!
 }
 
-
 /// Gets the username for a given UID.
 /// Useful for prompt customization (e.g., `user@mitos:~$`).
 pub fn get_username_by_uid(uid: u32) -> Option<String> {
     // mitos-utils uses `name_for_uid`, not `get_user_by_uid`
-    users::name_for_uid(uid) 
+    users::name_for_uid(uid)
 }
 
 /// Gets the current user's username for the shell prompt.
