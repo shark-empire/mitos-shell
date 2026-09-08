@@ -12,6 +12,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 dirs = "5.0"
 glob = "0.3"
+mitos-utils = { git = "https://github.com/shark-empire/mitos-utils"}
 
 
 [package.metadata.deb]
