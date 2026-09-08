@@ -1,6 +1,6 @@
+use crate::terminal::mrop;
 use nix::sys::signal::Signal;
 use nix::unistd::Pid;
-use crate::terminal::mrop;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum JobStatus {
@@ -54,10 +54,9 @@ impl JobTable {
     }
 }
 
-
 // When a background job is spawned:
 pub fn on_job_spawned(pid: u32, command: &str) {
-    // Inject a button into the terminal that lets the user 
+    // Inject a button into the terminal that lets the user
     // easily kill the background job without typing `kill`
     let label = format!("🛑 Kill background job {} ({})", pid, command);
     let cmd = format!("kill -9 {}", pid);
