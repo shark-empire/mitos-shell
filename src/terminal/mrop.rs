@@ -8,8 +8,9 @@ use std::io::{self, Write};
 /// This allows the shell to render clickable buttons and progress bars
 /// inline with standard text output.
 pub fn send_widget(widget: &RichWidget) -> io::Result<()> {
-    let json = serde_json::to_string(widget).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    
+    let json =
+        serde_json::to_string(widget).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
     // OSC 99 is the standard MITOS escape sequence for rich widgets
     // \x1b]99;{json}\x1b\\
     let mut stdout = io::stdout().lock();
