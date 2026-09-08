@@ -34,7 +34,7 @@ pub fn command_exists(name: &str) -> bool {
 }
 
 /// Helper to check if a file has the executable bit set for the current user.
-/// This prevents the shell from attempting to execute plain text files 
+/// This prevents the shell from attempting to execute plain text files
 /// that happen to be on the $PATH.
 #[inline]
 fn is_executable(path: &std::path::Path) -> bool {
@@ -44,10 +44,10 @@ fn is_executable(path: &std::path::Path) -> bool {
 }
 
 // ────────────────────────── MITOS-UTILS INTEGRATIONS ──────────────────────────
-// 
-// These wrappers expose the `mitos-utils` common library to the rest of 
-// the shell. By routing all path/user/permission logic through here, we 
-// guarantee that the shell's built-in behaviors (like `cd ~` or `ls -l`) 
+//
+// These wrappers expose the `mitos-utils` common library to the rest of
+// the shell. By routing all path/user/permission logic through here, we
+// guarantee that the shell's built-in behaviors (like `cd ~` or `ls -l`)
 // match the standalone MITOS coreutils exactly.
 
 /// Expands a leading `~` to the user's home directory.
@@ -67,7 +67,7 @@ pub fn format_permissions(mode: u32) -> String {
     mitos_utils::common::permissions::format_permissions(mode)
 }
 
-/// Gets the username for a given UID. 
+/// Gets the username for a given UID.
 /// Useful for prompt customization (e.g., `user@mitos:~$`).
 pub fn get_username_by_uid(uid: u32) -> Option<String> {
     mitos_utils::common::users::get_user_by_uid(uid).map(|u| u.name)
