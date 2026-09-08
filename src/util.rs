@@ -1,4 +1,5 @@
 use std::os::unix::fs::PermissionsExt;
+use mitos_utils::common::{paths, permissions, users};
 
 // ────────────────────────── Environment Variables ──────────────────────────
 
@@ -53,24 +54,28 @@ fn is_executable(path: &std::path::Path) -> bool {
 /// Expands a leading `~` to the user's home directory.
 /// Delegates to mitos-utils to ensure identical behavior to `mitos-cd` and `mitos-ls`.
 pub fn expand_tilde(path: &str) -> std::path::PathBuf {
-    mitos_utils::common::paths::expand_tilde(path)
+    paths::expand_tilde(path) // Now works because we added it to mitos-utils!
 }
 
 /// Safely resolves a path, normalizing `.` and `..` without resolving symlinks.
 pub fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
-    mitos_utils::common::paths::normalize(path)
+    // mitos-utils requires a `cwd` argument to resolve relative paths lexically
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    paths::normalize(path, &cwd) 
 }
 
 /// Formats Unix permissions (e.g., "drwxr-xr-x") using the exact same
 /// bitmask logic as the standalone `mitos-ls` applet.
 pub fn format_permissions(mode: u32) -> String {
-    mitos_utils::common::permissions::format_permissions(mode)
+    permissions::format_permissions(mode) // Now works because we added it to mitos-utils!
 }
+
 
 /// Gets the username for a given UID.
 /// Useful for prompt customization (e.g., `user@mitos:~$`).
 pub fn get_username_by_uid(uid: u32) -> Option<String> {
-    mitos_utils::common::users::get_user_by_uid(uid).map(|u| u.name)
+    // mitos-utils uses `name_for_uid`, not `get_user_by_uid`
+    users::name_for_uid(uid) 
 }
 
 /// Gets the current user's username for the shell prompt.
