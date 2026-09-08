@@ -37,8 +37,10 @@ impl Session {
 
         loop {
             let user = crate::util::get_current_username();
-             let prompt = format!("\x1b[1;32m{}@mitos\x1b[0m:\x1b[1;34m{}\x1b[0m$ ", user, current_dir);
-
+            let prompt = format!(
+                "\x1b[1;32m{}@mitos\x1b[0m:\x1b[1;34m{}\x1b[0m$ ",
+                user, current_dir
+            );
 
             match self.rl.readline(&prompt) {
                 Ok(line) => {
