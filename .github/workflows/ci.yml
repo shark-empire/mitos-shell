@@ -1,4 +1,4 @@
-name: mitos-shell build-test
+name: mitos-shell build
 
 on:
   push:
