@@ -1,5 +1,6 @@
 pub mod alias;
 pub mod eval;
+pub mod permission;
 pub mod read;
 pub mod set;
 pub mod system;
@@ -135,6 +136,14 @@ pub fn try_execute(executor: &mut Executor, args: &[String]) -> Option<ExecOutco
             }
         }
 
+        // Non-password ("ask") permission-request responses -- see
+        // src/permissions/. Deliberately no "always allow": the MITOS
+        // permission model requires a password for permanent grants,
+        // which belongs to mitos-session + mitos-gui, not this shell.
+        "allow" => Some(ExecOutcome::Status(permission::allow(executor, args))),
+        "deny" => Some(ExecOutcome::Status(permission::deny(executor, args))),
+        "permissions" => Some(ExecOutcome::Status(permission::list(executor))),
+
         // Aliases.
         "alias" => {
             if args.len() == 1 {
@@ -200,6 +209,9 @@ pub fn is_builtin(name: &str) -> bool {
             | "alias"
             | "unalias"
             | "trap"
+            | "allow"
+            | "deny"
+            | "permissions"
     )
 }
 
