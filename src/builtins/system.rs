@@ -6,7 +6,7 @@ pub fn builtin_whoami() -> Result<(), String> {
     let uid = nix::unistd::geteuid().as_raw();
 
     // Uses the exact same logic as the `mitos-utils` standalone binaries
-    let user = users::get_user_by_uid(uid)
+    let user = users::name_for_uid(uid)
         .map(|u| u.name)
         .unwrap_or_else(|| format!("uid:{}", uid));
 
