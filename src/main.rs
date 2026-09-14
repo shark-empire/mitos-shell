@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 mod builtins;
 mod completion;
 mod config;
