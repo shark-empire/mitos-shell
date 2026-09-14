@@ -48,8 +48,7 @@ impl PermissionClient {
     /// just means no prompts, not a broken shell.
     fn connect(&self) -> Option<UnixStream> {
         let mut stream = UnixStream::connect(socket_path()).ok()?;
-        let session_id =
-            std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "unknown".to_string());
+        let session_id = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "unknown".to_string());
         write_message(&mut stream, &ShellToService::Hello { session_id }).ok()?;
         Some(stream)
     }

@@ -61,7 +61,9 @@ pub enum ServiceToShell {
     Request(PermissionRequest),
     /// The daemon's answer when a decision comes back for an id that
     /// already expired or was resolved elsewhere (e.g. mitos-settings).
-    AlreadyResolved { id: u64 },
+    AlreadyResolved {
+        id: u64,
+    },
 }
 
 pub fn write_message<T: Serialize>(stream: &mut impl Write, message: &T) -> io::Result<()> {
@@ -77,5 +79,6 @@ pub fn read_message<T: DeserializeOwned>(stream: &mut impl Read) -> io::Result<T
     stream.read_exact(&mut length_bytes)?;
     let mut payload = vec![0u8; u32::from_le_bytes(length_bytes) as usize];
     stream.read_exact(&mut payload)?;
-    bincode::deserialize(&payload).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    bincode::deserialize(&payload)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
