@@ -44,6 +44,12 @@ pub struct Executor {
     /// `locals` into the real process environment, so child processes
     /// inherit them.
     pub exported: std::collections::HashSet<String>,
+    /// Shell-side half of the non-password ("ask") permission-request
+    /// flow -- see `src/permissions/`. Construction is cheap and
+    /// infallible (no socket is opened here), so this is safe to carry
+    /// on every `Executor`, including one-shot script runs; only
+    /// `Session::init()` actually connects and starts listening.
+    pub permissions: crate::permissions::client::PermissionClient,
 }
 
 impl Executor {
@@ -60,6 +66,7 @@ impl Executor {
             in_background: false,
             locals: HashMap::new(),
             exported: std::collections::HashSet::new(),
+            permissions: crate::permissions::client::PermissionClient::new(),
         }
     }
 
