@@ -6,6 +6,7 @@ mod execution;
 mod expansion;
 mod lexer;
 mod parser;
+mod permissions;
 mod process;
 mod shell;
 mod terminal;
