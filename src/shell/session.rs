@@ -29,6 +29,14 @@ impl Session {
 
         let _ = rl.load_history(&history_path());
 
+        // Start listening for non-password ("ask") permission requests.
+        // Only wired up here (not inside `Executor::new()` itself) so
+        // script-mode runs never open a socket or spawn a thread they
+        // will never use.
+        if let Ok(printer) = rl.create_external_printer() {
+            executor.permissions.spawn_listener(printer);
+        }
+
         Ok(Self { rl, executor })
     }
 
@@ -37,6 +45,9 @@ impl Session {
 
         loop {
             let user = crate::util::get_current_username();
+            let current_dir = std::env::current_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|_| "?".to_string());
             let prompt = format!(
                 "\x1b[1;32m{}@mitos\x1b[0m:\x1b[1;34m{}\x1b[0m$ ",
                 user, current_dir
@@ -125,15 +136,4 @@ fn history_path() -> std::path::PathBuf {
     let mut path = dirs::home_dir().unwrap_or_default();
     path.push(".mitos_history");
     path
-}
-
-fn build_prompt() -> String {
-    let cwd = std::env::current_dir()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| "?".to_string());
-
-    format!(
-        "\x1b[1;34mMITOS\x1b[0m \x1b[32m{}\x1b[0m \x1b[1m❯\x1b[0m ",
-        cwd
-    )
 }
