@@ -44,35 +44,38 @@ impl Session {
         let mut exit_code = 0;
 
         loop {
-// 1. Get the system username from OS environment / POSIX UID
-let system_user = crate::util::get_current_username();
+            // 1. Get the system username from OS environment / POSIX UID
+            let system_user = crate::util::get_current_username();
 
-// 2. Default to "shark" ONLY if no user is set yet or if system reports fallback defaults
-let username = if system_user.is_empty() || system_user == "unknown" || system_user == "nobody" {
-    String::from("shark")
-} else {
-    system_user
-};
+            // 2. Default to "shark" ONLY if no user is set yet or if system reports fallback defaults
+            let username =
+                if system_user.is_empty() || system_user == "unknown" || system_user == "nobody" {
+                    String::from("shark")
+                } else {
+                    system_user
+                };
 
-// 3. Root vs Regular user symbol
-let prompt_char = if username == "root" { '#' } else { '$' };
+            // 3. Root vs Regular user symbol
+            let prompt_char = if username == "root" { '#' } else { '$' };
 
-// 4. Working directory formatting (~ replacement)
-let current_dir = std::env::current_dir()
-    .map(|path| path.display().to_string())
-    .unwrap_or_else(|_| "?".to_string());
+            // 4. Working directory formatting (~ replacement)
+            let current_dir = std::env::current_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|_| "?".to_string());
 
-let mut display_dir = current_dir;
-if let Some(home) = dirs::home_dir() {
-    let home_str = home.display().to_string();
-    if display_dir.starts_with(&home_str) {
-        display_dir = display_dir.replacen(&home_str, "~", 1);
-    }
-}
+            let mut display_dir = current_dir;
+            if let Some(home) = dirs::home_dir() {
+                let home_str = home.display().to_string();
+                if display_dir.starts_with(&home_str) {
+                    display_dir = display_dir.replacen(&home_str, "~", 1);
+                }
+            }
 
-// 5. Construct prompt
-let prompt = format!("[ {}@mitos ]-[ {} ]-{} ", username, display_dir, prompt_char);
-
+            // 5. Construct prompt
+            let prompt = format!(
+                "[ {}@mitos ]-[ {} ]-{} ",
+                username, display_dir, prompt_char
+            );
 
             match self.rl.readline(&prompt) {
                 Ok(line) => {
