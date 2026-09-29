@@ -48,10 +48,19 @@ impl Session {
             let current_dir = std::env::current_dir()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|_| "?".to_string());
-            let prompt = format!(
-                "\x1b[1;32m{}@mitos\x1b[0m:\x1b[1;34m{}\x1b[0m$ ",
-                user, current_dir
-            );
+            
+            // Replace the home directory path with '~'
+            let mut display_dir = current_dir;
+            if let Some(home) = dirs::home_dir() {
+                let home_str = home.display().to_string();
+                if display_dir.starts_with(&home_str) {
+                    display_dir = display_dir.replacen(&home_str, "~", 1);
+                }
+            }
+
+            // Format exactly as [ user@mitos ]-[ ~/projects ]-$ 
+            let prompt = format!("[ {}@mitos ]-[ {} ]-$ ", user, display_dir);
+
 
             match self.rl.readline(&prompt) {
                 Ok(line) => {
