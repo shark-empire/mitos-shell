@@ -48,7 +48,7 @@ impl Session {
             let current_dir = std::env::current_dir()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|_| "?".to_string());
-            
+
             // Replace the home directory path with '~'
             let mut display_dir = current_dir;
             if let Some(home) = dirs::home_dir() {
@@ -58,9 +58,8 @@ impl Session {
                 }
             }
 
-            // Format exactly as [ user@mitos ]-[ ~/projects ]-$ 
+            // Format exactly as [ user@mitos ]-[ ~/projects ]-$
             let prompt = format!("[ {}@mitos ]-[ {} ]-$ ", user, display_dir);
-
 
             match self.rl.readline(&prompt) {
                 Ok(line) => {
